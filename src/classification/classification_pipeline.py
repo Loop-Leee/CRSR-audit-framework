@@ -77,6 +77,10 @@ def run_classification(
     keyword_matcher = KeywordMatcher(catalog)
     semantic_matcher = SemanticMatcher(catalog, llm_settings, logger)
     logger.info(
+        "risk_types_loaded: count=%s, risks=%s"
+        % (len(catalog.order), catalog.order)
+    )
+    logger.info(
         "LLM 并发配置: concurrent_enabled=%s, max_concurrency=%s"
         % (llm_settings.concurrent_enabled, llm_settings.max_concurrency)
     )
@@ -106,15 +110,23 @@ def run_classification(
             ):
                 final_risks = catalog.normalize_risks(keyword_risks + semantic_risks)
                 chunk["risk_type"] = final_risks
+                keyword_set = set(keyword_risks)
+                added_from_llm = catalog.normalize_risks(
+                    [risk for risk in semantic_risks if risk not in keyword_set]
+                )
 
                 logger.info(
-                    "chunk 分类完成: file=%s, chunk_id=%s, keyword_hits=%s, semantic_hits=%s, final_hits=%s"
+                    "chunk 分类完成: file=%s, chunk_id=%s, keyword_hits=%s, semantic_hits=%s, final_hits=%s, "
+                    "keyword_hits_list=%s, semantic_hits_list=%s, added=%s"
                     % (
                         file_path.name,
                         chunk_id,
                         len(keyword_risks),
                         len(semantic_risks),
                         len(final_risks),
+                        keyword_risks,
+                        semantic_risks,
+                        added_from_llm,
                     )
                 )
 
