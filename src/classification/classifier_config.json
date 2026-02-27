@@ -1,0 +1,6 @@
+{
+  "input_dir": "data/2-chunks",
+  "output_dir": "data/3-classified",
+  "risk_info_path": "prompt/risk_info.csv",
+  "log_dir": "log/clasification"
+}
