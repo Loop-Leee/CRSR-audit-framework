@@ -4,10 +4,10 @@ import hashlib
 import json
 from pathlib import Path
 
-from chunking.chunk_boundary_rules import split_blocks, split_sections, split_sentences
-from chunking.chunk_merge_strategy import merge_overfine_chunks
-from chunking.semantic_chunk_scoring import chunk_section
-from chunking.word_text_extractor import extract_word_text
+from .chunk_boundary_rules import split_blocks, split_sections, split_sentences
+from .chunk_merge_strategy import merge_overfine_chunks
+from .semantic_chunk_scoring import chunk_section
+from .word_text_extractor import extract_word_text
 
 
 def build_records(blocks: list[dict], limit: int) -> list[dict]:

@@ -3,9 +3,9 @@
 import argparse
 from pathlib import Path
 
-from chunking.chunking_config import clamp_chunk_size, load_chunking_config
-from chunking.word_chunking_pipeline import process_word_file
-from chunking.word_text_extractor import discover_word_files
+from .chunking_config import clamp_chunk_size, load_chunking_config
+from .word_chunking_pipeline import process_word_file
+from .word_text_extractor import discover_word_files
 
 
 def parse_args() -> argparse.Namespace:
