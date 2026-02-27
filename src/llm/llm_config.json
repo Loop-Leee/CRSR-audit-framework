@@ -4,6 +4,8 @@
   "base_url_env": "LLM_BASE_URL",
   "model_env": "LLM_MODEL",
   "default_base_url": "https://api.openai.com/v1",
+  "concurrent_enabled": true,
+  "max_concurrency": 10,
   "temperature": 0,
   "timeout_seconds": 45,
   "max_retries": 2

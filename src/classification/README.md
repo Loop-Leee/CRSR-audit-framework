@@ -14,6 +14,7 @@ python3 main.py classification
 python3 main.py classification --input data/2-chunks --output data/3-classified
 python3 main.py classification --disable-llm
 python3 main.py classification --llm-config src/llm/llm_config.json
+python3 main.py classification --disable-llm-concurrency
 ```
 
 ## 输入输出
@@ -55,6 +56,8 @@ python3 main.py classification --llm-config src/llm/llm_config.json
 如果 `LLM_MODEL` 缺失或 LLM 调用失败，模块会自动降级为“仅关键词匹配”，并写入错误日志。
 
 全局 LLM 配置文件：`src/llm/llm_config.json`
+默认并发调用：`concurrent_enabled=true`，`max_concurrency=10`。
+如果需要串行调用，可加参数 `--disable-llm-concurrency`。
 
 ## 日志
 

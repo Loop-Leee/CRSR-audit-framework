@@ -49,6 +49,7 @@ python3 main.py classification
 python3 main.py classification --input data/2-chunks --output data/3-classified
 python3 main.py classification --disable-llm
 python3 main.py classification --llm-config src/llm/llm_config.json
+python3 main.py classification --disable-llm-concurrency
 ```
 
 ## 模块说明
@@ -95,6 +96,9 @@ python3 main.py classification --llm-config src/llm/llm_config.json
 
 运行时会自动加载项目根目录 `.env`。`LLM_API_KEY` 可留空（无鉴权部署场景）。
 如果 LLM 不可用（模型缺失、调用失败、返回格式错误），会自动降级为仅关键词匹配，并在日志中记录错误。
+
+并发调用默认开启（`concurrent_enabled=true`，`max_concurrency=10`），
+可通过命令参数 `--disable-llm-concurrency` 关闭并发。
 
 ## 日志
 

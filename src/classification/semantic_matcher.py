@@ -5,14 +5,23 @@ from __future__ import annotations
 import json
 import re
 import time
+from dataclasses import dataclass
 
-from src.llm import LLMSettings, OpenAICompatibleClient
+from src.llm import LLMSettings, OpenAICompatibleClient, run_tasks
 
 from .classification_logger import ClassificationLogger
 from .risk_catalog import RiskCatalog
 
 
 _JSON_OBJECT_PATTERN = re.compile(r"\{[\s\S]*\}")
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticTask:
+    """单个 chunk 的语义匹配任务。"""
+
+    chunk_id: int | str
+    text: str
 
 
 class SemanticMatcher:
@@ -66,6 +75,22 @@ class SemanticMatcher:
             "语义匹配降级为关键词结果: file=%s, chunk_id=%s" % (source_file, chunk_id)
         )
         return []
+
+    def match_many(self, tasks: list[SemanticTask], source_file: str) -> list[list[str]]:
+        """批量语义匹配，默认并发执行。"""
+
+        if not tasks:
+            return []
+
+        def worker(task: SemanticTask) -> list[str]:
+            return self.match(task.text, task.chunk_id, source_file)
+
+        return run_tasks(
+            tasks,
+            worker,
+            concurrent_enabled=self._settings.concurrent_enabled,
+            max_concurrency=self._settings.max_concurrency,
+        )
 
     def _build_messages(self, text: str) -> list[dict[str, str]]:
         catalog_summary = self._catalog.prompt_summary()

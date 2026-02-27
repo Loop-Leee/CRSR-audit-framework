@@ -3,11 +3,43 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Callable, TypeVar
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from .config import LLMSettings
+
+
+T = TypeVar("T")
+R = TypeVar("R")
+
+
+def run_tasks(
+    items: list[T],
+    worker: Callable[[T], R],
+    *,
+    concurrent_enabled: bool,
+    max_concurrency: int,
+) -> list[R]:
+    """按输入顺序执行任务，支持并发与串行两种模式。"""
+
+    if not items:
+        return []
+
+    if not concurrent_enabled or max_concurrency <= 1 or len(items) == 1:
+        return [worker(item) for item in items]
+
+    results: list[R | None] = [None] * len(items)
+    with ThreadPoolExecutor(max_workers=max_concurrency) as pool:
+        future_to_index = {pool.submit(worker, item): idx for idx, item in enumerate(items)}
+        for future in as_completed(future_to_index):
+            index = future_to_index[future]
+            results[index] = future.result()
+
+    if any(item is None for item in results):
+        raise RuntimeError("并发任务执行异常：存在未返回结果的任务。")
+    return [item for item in results if item is not None]
 
 
 class OpenAICompatibleClient:
@@ -49,3 +81,13 @@ class OpenAICompatibleClient:
             return str(parsed["choices"][0]["message"]["content"])
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(f"LLM 返回解析失败: {body[:300]}") from exc
+
+    def chat_many(self, messages_batch: list[list[dict[str, str]]]) -> list[str]:
+        """批量调用 LLM，默认按配置并发执行。"""
+
+        return run_tasks(
+            messages_batch,
+            self.chat,
+            concurrent_enabled=self._settings.concurrent_enabled,
+            max_concurrency=self._settings.max_concurrency,
+        )

@@ -10,7 +10,7 @@ from src.llm import LLMSettings
 from .classification_logger import ClassificationLogger
 from .keyword_matcher import KeywordMatcher
 from .risk_catalog import load_risk_catalog
-from .semantic_matcher import SemanticMatcher
+from .semantic_matcher import SemanticMatcher, SemanticTask
 
 
 def discover_chunk_files(input_path: Path) -> list[Path]:
@@ -76,6 +76,10 @@ def run_classification(
     catalog = load_risk_catalog(risk_info_path)
     keyword_matcher = KeywordMatcher(catalog)
     semantic_matcher = SemanticMatcher(catalog, llm_settings, logger)
+    logger.info(
+        "LLM 并发配置: concurrent_enabled=%s, max_concurrency=%s"
+        % (llm_settings.concurrent_enabled, llm_settings.max_concurrency)
+    )
 
     logger.info(
         "分类开始: file_count=%s, risk_type_count=%s, input=%s, output=%s"
@@ -91,12 +95,15 @@ def run_classification(
             payload = json.loads(file_path.read_text(encoding="utf-8"))
             chunks = _extract_chunks(payload, file_path)
 
-            for index, chunk in enumerate(chunks, start=1):
-                chunk_id = chunk.get("chunk_id", index)
-                content = chunk["content"]
+            chunk_ids = [chunk.get("chunk_id", index) for index, chunk in enumerate(chunks, start=1)]
+            contents = [chunk["content"] for chunk in chunks]
+            keyword_risks_list = [keyword_matcher.match(content) for content in contents]
+            semantic_tasks = [SemanticTask(chunk_id=chunk_id, text=content) for chunk_id, content in zip(chunk_ids, contents)]
+            semantic_risks_list = semantic_matcher.match_many(semantic_tasks, file_path.name)
 
-                keyword_risks = keyword_matcher.match(content)
-                semantic_risks = semantic_matcher.match(content, chunk_id, file_path.name)
+            for chunk, chunk_id, keyword_risks, semantic_risks in zip(
+                chunks, chunk_ids, keyword_risks_list, semantic_risks_list
+            ):
                 final_risks = catalog.normalize_risks(keyword_risks + semantic_risks)
                 chunk["risk_type"] = final_risks
 

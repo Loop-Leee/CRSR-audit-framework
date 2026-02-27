@@ -7,12 +7,31 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from .env_loader import load_dotenv_file
-
 
 MODULE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = MODULE_DIR.parent.parent
 DEFAULT_LLM_CONFIG_PATH = MODULE_DIR / "llm_config.json"
+
+
+def load_dotenv_file(dotenv_path: Path) -> None:
+    """读取 .env 并写入环境变量（不覆盖已存在值）。"""
+
+    if not dotenv_path.exists():
+        return
+
+    for raw_line in dotenv_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        if "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +42,8 @@ class LLMSettings:
     api_key: str
     base_url: str
     model: str
+    concurrent_enabled: bool
+    max_concurrency: int
     temperature: float
     timeout_seconds: int
     max_retries: int
@@ -37,7 +58,11 @@ def _normalize_base_url(raw_url: str) -> str:
     return base
 
 
-def load_llm_settings(config_path: Path | None = None, enabled_override: bool | None = None) -> LLMSettings:
+def load_llm_settings(
+    config_path: Path | None = None,
+    enabled_override: bool | None = None,
+    concurrent_enabled_override: bool | None = None,
+) -> LLMSettings:
     """加载统一 LLM 配置并注入环境变量。"""
 
     load_dotenv_file(PROJECT_ROOT / ".env")
@@ -46,10 +71,13 @@ def load_llm_settings(config_path: Path | None = None, enabled_override: bool | 
 
     timeout_seconds = int(raw.get("timeout_seconds", 45))
     max_retries = int(raw.get("max_retries", 2))
+    max_concurrency = int(raw.get("max_concurrency", 10))
     if timeout_seconds <= 0:
         raise ValueError("配置错误：timeout_seconds 必须大于 0。")
     if max_retries < 0:
         raise ValueError("配置错误：max_retries 不能小于 0。")
+    if max_concurrency <= 0:
+        raise ValueError("配置错误：max_concurrency 必须大于 0。")
 
     api_key_env = str(raw.get("api_key_env", "LLM_API_KEY"))
     base_url_env = str(raw.get("base_url_env", "LLM_BASE_URL"))
@@ -58,6 +86,9 @@ def load_llm_settings(config_path: Path | None = None, enabled_override: bool | 
     enabled = bool(raw.get("enabled", True))
     if enabled_override is not None:
         enabled = enabled_override
+    concurrent_enabled = bool(raw.get("concurrent_enabled", True))
+    if concurrent_enabled_override is not None:
+        concurrent_enabled = concurrent_enabled_override
 
     return LLMSettings(
         enabled=enabled,
@@ -66,6 +97,8 @@ def load_llm_settings(config_path: Path | None = None, enabled_override: bool | 
             os.getenv(base_url_env, str(raw.get("default_base_url", "https://api.openai.com/v1")))
         ),
         model=os.getenv(model_env, "").strip(),
+        concurrent_enabled=concurrent_enabled,
+        max_concurrency=max_concurrency,
         temperature=float(raw.get("temperature", 0)),
         timeout_seconds=timeout_seconds,
         max_retries=max_retries,
