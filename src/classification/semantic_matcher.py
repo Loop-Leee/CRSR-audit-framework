@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import json
 import re
-import time
 from dataclasses import dataclass
 
-from src.llm import LLMSettings, OpenAICompatibleClient, run_tasks
+from src.llm import LLMClientError, LLMSettings, OpenAICompatibleClient, run_tasks
 from src.tools.logger import Logger
 
 from .risk_catalog import RiskCatalog
@@ -22,6 +21,29 @@ class SemanticTask:
 
     chunk_id: int | str
     text: str
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticTrace:
+    """语义匹配的调用元数据。"""
+
+    llm_called: bool
+    schema_valid: bool
+    token_in: int
+    token_out: int
+    latency_ms: float
+    request_id: str
+    retries: int
+    error_code: str | None
+    cached: bool
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticMatchResult:
+    """语义匹配结果与诊断信息。"""
+
+    risks: list[str]
+    trace: SemanticTrace
 
 
 class SemanticMatcher:
@@ -50,40 +72,103 @@ class SemanticMatcher:
         self._client = OpenAICompatibleClient(settings)
 
     def match(self, text: str, chunk_id: int | str, source_file: str) -> list[str]:
-        """返回语义匹配到的风险类型。"""
+        """返回语义匹配到的风险类型（兼容旧接口）。"""
+
+        return self.match_with_trace(text, chunk_id, source_file).risks
+
+    def match_with_trace(self, text: str, chunk_id: int | str, source_file: str) -> SemanticMatchResult:
+        """返回语义匹配风险类型与调用元数据。"""
 
         if not self._enabled or self._client is None:
-            return []
+            return SemanticMatchResult(
+                risks=[],
+                trace=SemanticTrace(
+                    llm_called=False,
+                    schema_valid=True,
+                    token_in=0,
+                    token_out=0,
+                    latency_ms=0.0,
+                    request_id="",
+                    retries=0,
+                    error_code="llm_disabled",
+                    cached=False,
+                ),
+            )
 
         messages = self._build_messages(text)
-        attempts = self._settings.max_retries + 1
-
-        for attempt in range(1, attempts + 1):
+        try:
+            response = self._client.chat_with_metadata(messages)
             try:
-                raw = self._client.chat(messages)
-                parsed = self._parse_response(raw)
-                return self._catalog.normalize_risks(parsed)
+                parsed = self._parse_response(response.content)
+                return SemanticMatchResult(
+                    risks=self._catalog.normalize_risks(parsed),
+                    trace=SemanticTrace(
+                        llm_called=True,
+                        schema_valid=True,
+                        token_in=response.token_in,
+                        token_out=response.token_out,
+                        latency_ms=response.latency_ms,
+                        request_id=response.request_id,
+                        retries=response.retries,
+                        error_code=None,
+                        cached=response.cached,
+                    ),
+                )
             except Exception as exc:  # noqa: BLE001
                 self._logger.error(
-                    "语义匹配失败: file=%s, chunk_id=%s, attempt=%s/%s, error=%s"
-                    % (source_file, chunk_id, attempt, attempts, exc)
+                    "语义匹配解析失败: file=%s, chunk_id=%s, request_id=%s, error=%s"
+                    % (source_file, chunk_id, response.request_id, exc)
                 )
-                if attempt < attempts:
-                    time.sleep(attempt)
-
-        self._logger.error(
-            "语义匹配降级为关键词结果: file=%s, chunk_id=%s" % (source_file, chunk_id)
-        )
-        return []
+                return SemanticMatchResult(
+                    risks=[],
+                    trace=SemanticTrace(
+                        llm_called=True,
+                        schema_valid=False,
+                        token_in=response.token_in,
+                        token_out=response.token_out,
+                        latency_ms=response.latency_ms,
+                        request_id=response.request_id,
+                        retries=response.retries,
+                        error_code="invalid_schema",
+                        cached=response.cached,
+                    ),
+                )
+        except LLMClientError as exc:
+            self._logger.error(
+                "语义匹配失败: file=%s, chunk_id=%s, retries=%s, error_code=%s, error=%s"
+                % (source_file, chunk_id, exc.retries, exc.error_code, exc)
+            )
+            self._logger.error(
+                "语义匹配降级为关键词结果: file=%s, chunk_id=%s" % (source_file, chunk_id)
+            )
+            return SemanticMatchResult(
+                risks=[],
+                trace=SemanticTrace(
+                    llm_called=True,
+                    schema_valid=False,
+                    token_in=0,
+                    token_out=0,
+                    latency_ms=0.0,
+                    request_id=exc.request_id,
+                    retries=exc.retries,
+                    error_code=exc.error_code or "llm_error",
+                    cached=False,
+                ),
+            )
 
     def match_many(self, tasks: list[SemanticTask], source_file: str) -> list[list[str]]:
         """批量语义匹配，默认并发执行。"""
 
+        return [item.risks for item in self.match_many_with_trace(tasks, source_file)]
+
+    def match_many_with_trace(self, tasks: list[SemanticTask], source_file: str) -> list[SemanticMatchResult]:
+        """批量语义匹配并返回调用元数据。"""
+
         if not tasks:
             return []
 
-        def worker(task: SemanticTask) -> list[str]:
-            return self.match(task.text, task.chunk_id, source_file)
+        def worker(task: SemanticTask) -> SemanticMatchResult:
+            return self.match_with_trace(task.text, task.chunk_id, source_file)
 
         return run_tasks(
             tasks,

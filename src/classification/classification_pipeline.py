@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 from src.llm import LLMSettings
@@ -10,7 +11,36 @@ from src.tools.logger import Logger
 
 from .keyword_matcher import KeywordMatcher
 from .risk_catalog import load_risk_catalog
-from .semantic_matcher import SemanticMatcher, SemanticTask
+from .semantic_matcher import SemanticMatchResult, SemanticMatcher, SemanticTask
+
+
+@dataclass(frozen=True, slots=True)
+class ChunkClassificationDiagnostic:
+    """单个 chunk 的分类诊断信息。"""
+
+    source_file: str
+    chunk_id: int | str
+    keyword_risks: list[str]
+    semantic_risks: list[str]
+    final_risks: list[str]
+    llm_called: bool
+    schema_valid: bool
+    token_in: int
+    token_out: int
+    latency_ms: float
+    request_id: str
+    retries: int
+    error_code: str | None
+    cached: bool
+    conflict: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ClassificationRunResult:
+    """分类执行结果。"""
+
+    outputs: list[Path]
+    chunk_diagnostics: list[ChunkClassificationDiagnostic]
 
 
 def discover_chunk_files(input_path: Path) -> list[Path]:
@@ -67,7 +97,26 @@ def run_classification(
     llm_settings: LLMSettings,
     logger: Logger,
 ) -> list[Path]:
-    """执行分类主流程。"""
+    """执行分类主流程（兼容旧接口，仅返回输出文件列表）。"""
+
+    return run_classification_with_diagnostics(
+        input_path=input_path,
+        output_dir=output_dir,
+        risk_info_path=risk_info_path,
+        llm_settings=llm_settings,
+        logger=logger,
+    ).outputs
+
+
+def run_classification_with_diagnostics(
+    *,
+    input_path: Path,
+    output_dir: Path,
+    risk_info_path: Path,
+    llm_settings: LLMSettings,
+    logger: Logger,
+) -> ClassificationRunResult:
+    """执行分类主流程并返回 chunk 级诊断信息。"""
 
     files = discover_chunk_files(input_path)
     if not files:
@@ -91,6 +140,7 @@ def run_classification(
     )
 
     outputs: list[Path] = []
+    diagnostics: list[ChunkClassificationDiagnostic] = []
     failures: list[str] = []
 
     for file_path in files:
@@ -103,20 +153,45 @@ def run_classification(
             contents = [chunk["content"] for chunk in chunks]
             keyword_risks_list = [keyword_matcher.match(content) for content in contents]
             semantic_tasks = [SemanticTask(chunk_id=chunk_id, text=content) for chunk_id, content in zip(chunk_ids, contents)]
-            semantic_risks_list = semantic_matcher.match_many(semantic_tasks, file_path.name)
+            semantic_results: list[SemanticMatchResult] = semantic_matcher.match_many_with_trace(semantic_tasks, file_path.name)
 
-            for chunk, chunk_id, keyword_risks, semantic_risks in zip(
-                chunks, chunk_ids, keyword_risks_list, semantic_risks_list
+            for chunk, chunk_id, keyword_risks, semantic_result in zip(
+                chunks, chunk_ids, keyword_risks_list, semantic_results
             ):
+                semantic_risks = semantic_result.risks
                 final_risks = catalog.normalize_risks(keyword_risks + semantic_risks)
                 chunk["risk_type"] = final_risks
                 keyword_set = set(keyword_risks)
+                semantic_set = set(semantic_risks)
                 added_from_llm = catalog.normalize_risks(
                     [risk for risk in semantic_risks if risk not in keyword_set]
+                )
+                conflict = bool(keyword_set and semantic_set and keyword_set.isdisjoint(semantic_set))
+                trace = semantic_result.trace
+
+                diagnostics.append(
+                    ChunkClassificationDiagnostic(
+                        source_file=str(file_path),
+                        chunk_id=chunk_id,
+                        keyword_risks=keyword_risks,
+                        semantic_risks=semantic_risks,
+                        final_risks=final_risks,
+                        llm_called=trace.llm_called,
+                        schema_valid=trace.schema_valid,
+                        token_in=trace.token_in,
+                        token_out=trace.token_out,
+                        latency_ms=trace.latency_ms,
+                        request_id=trace.request_id,
+                        retries=trace.retries,
+                        error_code=trace.error_code,
+                        cached=trace.cached,
+                        conflict=conflict,
+                    )
                 )
 
                 logger.info(
                     "chunk 分类完成: file=%s, chunk_id=%s, keyword_hits=%s, semantic_hits=%s, final_hits=%s, "
+                    "token_in=%s, token_out=%s, latency_ms=%.2f, request_id=%s, retries=%s, error_code=%s, cache=%s, "
                     "keyword_hits_list=%s, semantic_hits_list=%s, added=%s"
                     % (
                         file_path.name,
@@ -124,6 +199,13 @@ def run_classification(
                         len(keyword_risks),
                         len(semantic_risks),
                         len(final_risks),
+                        trace.token_in,
+                        trace.token_out,
+                        trace.latency_ms,
+                        trace.request_id or "-",
+                        trace.retries,
+                        trace.error_code or "-",
+                        trace.cached,
                         keyword_risks,
                         semantic_risks,
                         added_from_llm,
@@ -144,4 +226,4 @@ def run_classification(
         raise RuntimeError("分类流程存在失败文件，请检查日志。")
 
     logger.info("分类结束: success_count=%s" % len(outputs))
-    return outputs
+    return ClassificationRunResult(outputs=outputs, chunk_diagnostics=diagnostics)

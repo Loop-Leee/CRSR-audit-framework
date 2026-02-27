@@ -47,6 +47,8 @@ class LLMSettings:
     temperature: float
     timeout_seconds: int
     max_retries: int
+    cache_enabled: bool
+    cache_path: Path
 
 
 def _normalize_base_url(raw_url: str) -> str:
@@ -56,6 +58,15 @@ def _normalize_base_url(raw_url: str) -> str:
     if base.endswith("/chat/completions"):
         base = base[: -len("/chat/completions")]
     return base
+
+
+def _resolve_path(path_value: str | Path) -> Path:
+    """将配置路径解析为绝对路径。"""
+
+    raw = Path(path_value)
+    if raw.is_absolute():
+        return raw
+    return PROJECT_ROOT / raw
 
 
 def load_llm_settings(
@@ -78,6 +89,9 @@ def load_llm_settings(
         raise ValueError("配置错误：max_retries 不能小于 0。")
     if max_concurrency <= 0:
         raise ValueError("配置错误：max_concurrency 必须大于 0。")
+
+    cache_enabled = bool(raw.get("cache_enabled", True))
+    cache_path = _resolve_path(raw.get("cache_path", "data/experiments/cache/llm_cache.jsonl"))
 
     api_key_env = str(raw.get("api_key_env", "LLM_API_KEY"))
     base_url_env = str(raw.get("base_url_env", "LLM_BASE_URL"))
@@ -102,4 +116,6 @@ def load_llm_settings(
         temperature=float(raw.get("temperature", 0)),
         timeout_seconds=timeout_seconds,
         max_retries=max_retries,
+        cache_enabled=cache_enabled,
+        cache_path=cache_path,
     )

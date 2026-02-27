@@ -52,6 +52,35 @@ python3 main.py classification --llm-config src/llm/llm_config.json
 python3 main.py classification --disable-llm-concurrency
 ```
 
+3. `experiment`（统一实验入口，固定参数并产出指标）
+
+```bash
+python3 main.py experiment \
+  --run-name exp_keyword_llm \
+  --mode keyword_llm \
+  --chunk-size 1000 \
+  --input-dir data/1-original \
+  --output-root data/experiments
+```
+
+仅跑关键词基线（不调用 LLM）：
+
+```bash
+python3 main.py experiment \
+  --run-name exp_keyword_only \
+  --mode keyword_only \
+  --chunk-size 1000
+```
+
+带标注集（用于 P/R/F1）：
+
+```bash
+python3 main.py experiment \
+  --run-name exp_eval \
+  --mode keyword_llm \
+  --ground-truth baseline
+```
+
 ## 模块说明
 
 ### chunking
@@ -80,6 +109,37 @@ python3 main.py classification --disable-llm-concurrency
 }
 ```
 
+### experiment
+
+- 目录：`src/experiment/`
+- 统一入口：`src/experiment/run_experiment.py`
+- 指标口径：`src/experiment/metrics.py`
+- 产物落盘：`src/experiment/artifact_writer.py`
+- 输出根目录：`data/experiments/`
+
+每次实验会生成：
+
+```text
+data/experiments/
+  results.csv                  # 每次实验一行（汇总）
+  results.jsonl                # 每次实验一行（结构化）
+  <run_id>/
+    chunks/*.chunks.json
+    classified/*.classified.json
+    audit_result/audit_result.json
+    final_report/final_report.md
+    metrics/
+      experiment_config.json
+      llm_trace.jsonl
+      metrics.json
+```
+
+`results.csv` 包含实验参数与核心指标：
+
+- 配置参数：`run_id/timestamp/mode/model/temperature/chunk_size/max_concurrency/cache_*`
+- 质量指标：`precision/recall/f1`（有标注集时计算）
+- 运行指标：`schema_valid_rate/avg_token/avg_latency_ms/conflict_rate/cache_hit_rate/llm_error_rate`
+
 ## LLM 配置
 
 项目统一通过 `src/llm/` 模块管理 LLM 调用与配置：
@@ -97,8 +157,23 @@ python3 main.py classification --disable-llm-concurrency
 运行时会自动加载项目根目录 `.env`。`LLM_API_KEY` 可留空（无鉴权部署场景）。
 如果 LLM 不可用（模型缺失、调用失败、返回格式错误），会自动降级为仅关键词匹配，并在日志中记录错误。
 
+`llm_config.json` 中可配置：
+
+- `max_retries`: HTTP/网络失败重试次数
+- `cache_enabled`: 是否开启持久化缓存
+- `cache_path`: 缓存文件路径（JSONL）
+
 并发调用默认开启（`concurrent_enabled=true`，`max_concurrency=10`），
 可通过命令参数 `--disable-llm-concurrency` 关闭并发。
+
+LLM 响应元数据（用于实验指标）：
+
+- `token_in/token_out`
+- `latency_ms`
+- `request_id`
+- `retries`
+- `error_code`
+- `cached`
 
 ## 日志
 
@@ -106,6 +181,7 @@ python3 main.py classification --disable-llm-concurrency
 
 - `chunking`: `log/chunking/*.log`
 - `classification`: `log/classification/*.log`
+- `experiment`: `log/experiment/*.log`
 
 - 关键步骤日志：`[info]`
 - 错误日志：`[error]`
