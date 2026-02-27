@@ -42,7 +42,7 @@ python3 main.py classification --disable-llm-concurrency
   "input_dir": "data/2-chunks",
   "output_dir": "data/3-classified",
   "risk_info_path": "prompt/risk_info.csv",
-  "log_dir": "log/clasification"
+  "log_dir": "log/classification"
 }
 ```
 
@@ -61,14 +61,14 @@ python3 main.py classification --disable-llm-concurrency
 
 ## 日志
 
-日志目录：`log/clasification/`
+日志目录：`log/classification/`
 
 日志要求：关键执行步骤与执行错误都会写入日志，使用 `[info]` 与 `[error]` 标签区分。
 
 ## 关键文件
 
 - `classification_config.py`：配置加载与路径解析
-- `classification_logger.py`：日志输出
+- `src/tools/logger.py`：统一日志模块（classification 直接复用）
 - `risk_catalog.py`：风险类型目录加载（来自 `prompt/risk_info.csv`）
 - `keyword_matcher.py`：关键词匹配
 - `semantic_matcher.py`：语义匹配与失败降级

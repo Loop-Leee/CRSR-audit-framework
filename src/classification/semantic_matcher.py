@@ -8,8 +8,8 @@ import time
 from dataclasses import dataclass
 
 from src.llm import LLMSettings, OpenAICompatibleClient, run_tasks
+from src.tools.logger import Logger
 
-from .classification_logger import ClassificationLogger
 from .risk_catalog import RiskCatalog
 
 
@@ -27,7 +27,7 @@ class SemanticTask:
 class SemanticMatcher:
     """基于大模型进行风险类型语义匹配。"""
 
-    def __init__(self, catalog: RiskCatalog, settings: LLMSettings, logger: ClassificationLogger) -> None:
+    def __init__(self, catalog: RiskCatalog, settings: LLMSettings, logger: Logger) -> None:
         self._catalog = catalog
         self._settings = settings
         self._logger = logger

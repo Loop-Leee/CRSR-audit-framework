@@ -31,5 +31,5 @@ def load_classification_config(config_path: Path | None = None) -> dict:
         "input": _resolve_path(raw.get("input_dir"), "data/2-chunks"),
         "output": _resolve_path(raw.get("output_dir"), "data/3-classified"),
         "risk_info": _resolve_path(raw.get("risk_info_path"), "prompt/risk_info.csv"),
-        "log_dir": _resolve_path(raw.get("log_dir"), "log/clasification"),
+        "log_dir": _resolve_path(raw.get("log_dir"), "log/classification"),
     }

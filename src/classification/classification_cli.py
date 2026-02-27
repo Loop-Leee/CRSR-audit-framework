@@ -6,9 +6,9 @@ import argparse
 from pathlib import Path
 
 from src.llm import DEFAULT_LLM_CONFIG_PATH, load_llm_settings
+from src.tools.logger import get_logger
 
 from .classification_config import load_classification_config
-from .classification_logger import ClassificationLogger
 from .classification_pipeline import run_classification
 
 
@@ -48,7 +48,7 @@ def main() -> None:
         concurrent_enabled_override=False if args.disable_llm_concurrency else None,
     )
 
-    logger = ClassificationLogger(config["log_dir"])
+    logger = get_logger("classification", log_dir=config["log_dir"])
     logger.info(f"日志文件: {logger.path}")
 
     outputs = run_classification(

@@ -65,3 +65,10 @@ python3 main.py --chunk-size 1500
 - `chunk_merge_strategy.py`: 过细 chunk 合并策略。
 - `word_chunking_pipeline.py`: 串联完整分块流程并写出 JSON。
 - `chunking_cli.py`: 命令行入口。
+- `src/tools/logger.py`: 通用日志模块，统一输出到 `log/chunking/*.log`。
+
+## 日志
+
+- 日志目录：`log/chunking/`
+- 关键步骤：`[info]`
+- 错误路径：`[error]`

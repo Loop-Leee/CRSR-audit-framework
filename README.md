@@ -102,7 +102,10 @@ python3 main.py classification --disable-llm-concurrency
 
 ## 日志
 
-`classification` 日志输出目录：`log/clasification/`
+日志能力统一由 `src/tools/logger.py` 提供，按模块输出到：
+
+- `chunking`: `log/chunking/*.log`
+- `classification`: `log/classification/*.log`
 
 - 关键步骤日志：`[info]`
 - 错误日志：`[error]`

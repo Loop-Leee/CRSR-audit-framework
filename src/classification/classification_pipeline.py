@@ -6,8 +6,8 @@ import json
 from pathlib import Path
 
 from src.llm import LLMSettings
+from src.tools.logger import Logger
 
-from .classification_logger import ClassificationLogger
 from .keyword_matcher import KeywordMatcher
 from .risk_catalog import load_risk_catalog
 from .semantic_matcher import SemanticMatcher, SemanticTask
@@ -65,7 +65,7 @@ def run_classification(
     output_dir: Path,
     risk_info_path: Path,
     llm_settings: LLMSettings,
-    logger: ClassificationLogger,
+    logger: Logger,
 ) -> list[Path]:
     """执行分类主流程。"""
 
