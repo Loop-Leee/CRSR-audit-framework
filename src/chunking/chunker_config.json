@@ -1,5 +1,5 @@
 {
-  "min_chunk_size": 1000,
+  "min_chunk_size": 500,
   "max_chunk_size": 20000,
   "input_dir": "data/1-original",
   "output_dir": "data/2-chunks"
