@@ -39,6 +39,7 @@ class ArtifactWriter:
         """初始化实验目录结构。"""
 
         run_dir = self._output_root / run_id
+        # 每个 run 使用独立目录，避免跨实验产物互相覆盖。
         layout = ExperimentLayout(
             output_root=self._output_root,
             run_dir=run_dir,
@@ -142,11 +143,19 @@ class ArtifactWriter:
             f"- recall: {metrics.recall}",
             f"- f1: {metrics.f1}",
             f"- schema_valid_rate: {metrics.schema_valid_rate:.6f}",
+            f"- avg_token_in: {metrics.avg_token_in:.6f}",
+            f"- avg_token_out: {metrics.avg_token_out:.6f}",
+            f"- avg_total_token: {metrics.avg_total_token:.6f}",
             f"- avg_token: {metrics.avg_token:.6f}",
+            f"- avg_reasoning_token: {metrics.avg_reasoning_token:.6f}",
+            f"- avg_cached_token: {metrics.avg_cached_token:.6f}",
             f"- avg_latency_ms: {metrics.avg_latency_ms:.6f}",
+            f"- reasoning_token_ratio: {metrics.reasoning_token_ratio:.6f}",
+            f"- cached_token_ratio: {metrics.cached_token_ratio:.6f}",
             f"- conflict_rate: {metrics.conflict_rate:.6f}",
             f"- cache_hit_rate: {metrics.cache_hit_rate:.6f}",
             f"- llm_error_rate: {metrics.llm_error_rate:.6f}",
+            f"- total_tokens_estimated_rate: {metrics.total_tokens_estimated_rate:.6f}",
         ]
         output = layout.final_report_dir / "final_report.md"
         output.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -162,8 +171,10 @@ class ArtifactWriter:
 
         csv_path = self._output_root / "results.csv"
         jsonl_path = self._output_root / "results.jsonl"
+        # CSV 作为论文/表格分析输入，JSONL 作为结构化追溯输入。
         normalized = {field: _normalize_cell(row.get(field)) for field in fieldnames}
 
+        _ensure_csv_schema(csv_path, fieldnames)
         write_header = not csv_path.exists() or csv_path.stat().st_size == 0
         with csv_path.open("a", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=fieldnames)
@@ -182,3 +193,29 @@ def _normalize_cell(value: Any) -> Any:
     if isinstance(value, (dict, list)):
         return json.dumps(value, ensure_ascii=False)
     return value
+
+
+def _ensure_csv_schema(csv_path: Path, fieldnames: list[str]) -> None:
+    """确保 results.csv 表头与最新字段一致。"""
+
+    if not csv_path.exists() or csv_path.stat().st_size == 0:
+        return
+
+    with csv_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.reader(handle)
+        existing_header = next(reader, [])
+
+    if existing_header == fieldnames:
+        return
+
+    migrated_rows: list[dict[str, Any]] = []
+    with csv_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            migrated_rows.append({field: row.get(field, "") for field in fieldnames})
+
+    with csv_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in migrated_rows:
+            writer.writerow(row)

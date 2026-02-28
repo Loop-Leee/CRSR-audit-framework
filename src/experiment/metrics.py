@@ -23,11 +23,19 @@ class ExperimentMetrics:
         recall: 微平均 Recall；无标注集时为 None。
         f1: 微平均 F1；无标注集时为 None。
         schema_valid_rate: LLM 返回可解析 JSON 比例。
-        avg_token: 平均 token 消耗（`token_in + token_out`）。
+        avg_token_in: 平均输入 token（prompt tokens）。
+        avg_token_out: 平均输出 token（completion tokens）。
+        avg_total_token: 平均总 token。
+        avg_token: 平均 token 消耗（兼容字段，等于 `avg_total_token`）。
+        avg_reasoning_token: 平均推理 token。
+        avg_cached_token: 平均缓存命中 token。
         avg_latency_ms: 平均请求时延（毫秒）。
+        reasoning_token_ratio: 推理 token 占总 token 比例。
+        cached_token_ratio: 缓存命中 token 占输入 token 比例。
         conflict_rate: keyword 与 semantic 结果冲突率。
         cache_hit_rate: LLM 缓存命中率。
         llm_error_rate: LLM 调用失败率（含 schema 失败）。
+        total_tokens_estimated_rate: `total_tokens` 缺失时的回退比例。
         chunk_count: chunk 总数。
         llm_called_count: 实际触发 LLM 调用的 chunk 数。
         label_support: 标注集中正例标签总数；无标注集时为 0。
@@ -37,11 +45,19 @@ class ExperimentMetrics:
     recall: float | None
     f1: float | None
     schema_valid_rate: float
+    avg_token_in: float
+    avg_token_out: float
+    avg_total_token: float
     avg_token: float
+    avg_reasoning_token: float
+    avg_cached_token: float
     avg_latency_ms: float
+    reasoning_token_ratio: float
+    cached_token_ratio: float
     conflict_rate: float
     cache_hit_rate: float
     llm_error_rate: float
+    total_tokens_estimated_rate: float
     chunk_count: int
     llm_called_count: int
     label_support: int
@@ -76,24 +92,48 @@ def compute_experiment_metrics(
     ground_truth = _load_ground_truth(ground_truth_path)
     precision, recall, f1, label_support = _compute_prf1(predictions, ground_truth)
 
+    # 运行指标只在真实触发 LLM 的样本上统计，避免 keyword_only 模式误差。
     llm_rows = [item for item in diagnostics if item.llm_called]
+    avg_token_in = _safe_mean([item.token_in for item in llm_rows])
+    avg_token_out = _safe_mean([item.token_out for item in llm_rows])
+    avg_total_token = _safe_mean([item.total_tokens for item in llm_rows])
     schema_valid_rate = _safe_rate(sum(1 for item in llm_rows if item.schema_valid), len(llm_rows))
-    avg_token = _safe_mean([item.token_in + item.token_out for item in llm_rows])
+    avg_token = avg_total_token
+    avg_reasoning_token = _safe_mean([item.reasoning_tokens for item in llm_rows])
+    avg_cached_token = _safe_mean([item.cached_tokens for item in llm_rows])
     avg_latency_ms = _safe_mean([item.latency_ms for item in llm_rows])
+    total_prompt_tokens = sum(item.token_in for item in llm_rows)
+    total_tokens = sum(item.total_tokens for item in llm_rows)
+    total_reasoning_tokens = sum(item.reasoning_tokens for item in llm_rows)
+    total_cached_tokens = sum(item.cached_tokens for item in llm_rows)
+    reasoning_token_ratio = _safe_rate(total_reasoning_tokens, total_tokens)
+    cached_token_ratio = _safe_rate(total_cached_tokens, total_prompt_tokens)
     conflict_rate = _safe_rate(sum(1 for item in diagnostics if item.conflict), len(diagnostics))
     cache_hit_rate = _safe_rate(sum(1 for item in llm_rows if item.cached), len(llm_rows))
     llm_error_rate = _safe_rate(sum(1 for item in llm_rows if item.error_code is not None), len(llm_rows))
+    total_tokens_estimated_rate = _safe_rate(
+        sum(1 for item in llm_rows if item.total_tokens_estimated),
+        len(llm_rows),
+    )
 
     return ExperimentMetrics(
         precision=precision,
         recall=recall,
         f1=f1,
         schema_valid_rate=schema_valid_rate,
+        avg_token_in=avg_token_in,
+        avg_token_out=avg_token_out,
+        avg_total_token=avg_total_token,
         avg_token=avg_token,
+        avg_reasoning_token=avg_reasoning_token,
+        avg_cached_token=avg_cached_token,
         avg_latency_ms=avg_latency_ms,
+        reasoning_token_ratio=reasoning_token_ratio,
+        cached_token_ratio=cached_token_ratio,
         conflict_rate=conflict_rate,
         cache_hit_rate=cache_hit_rate,
         llm_error_rate=llm_error_rate,
+        total_tokens_estimated_rate=total_tokens_estimated_rate,
         chunk_count=len(diagnostics),
         llm_called_count=len(llm_rows),
         label_support=label_support,
@@ -196,6 +236,7 @@ def _compute_prf1(
     predictions: dict[ChunkKey, set[str]],
     ground_truth: dict[ChunkKey, set[str]],
 ) -> tuple[float | None, float | None, float | None, int]:
+    # 无标注时返回 None，避免把“未评估”误解为 0 分。
     if not ground_truth:
         return None, None, None, 0
 

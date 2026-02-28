@@ -31,6 +31,10 @@ class SemanticTrace:
     schema_valid: bool
     token_in: int
     token_out: int
+    total_tokens: int
+    cached_tokens: int
+    reasoning_tokens: int
+    total_tokens_estimated: bool
     latency_ms: float
     request_id: str
     retries: int
@@ -87,6 +91,10 @@ class SemanticMatcher:
                     schema_valid=True,
                     token_in=0,
                     token_out=0,
+                    total_tokens=0,
+                    cached_tokens=0,
+                    reasoning_tokens=0,
+                    total_tokens_estimated=False,
                     latency_ms=0.0,
                     request_id="",
                     retries=0,
@@ -107,6 +115,10 @@ class SemanticMatcher:
                         schema_valid=True,
                         token_in=response.token_in,
                         token_out=response.token_out,
+                        total_tokens=response.total_tokens,
+                        cached_tokens=response.cached_tokens,
+                        reasoning_tokens=response.reasoning_tokens,
+                        total_tokens_estimated=response.total_tokens_estimated,
                         latency_ms=response.latency_ms,
                         request_id=response.request_id,
                         retries=response.retries,
@@ -126,6 +138,10 @@ class SemanticMatcher:
                         schema_valid=False,
                         token_in=response.token_in,
                         token_out=response.token_out,
+                        total_tokens=response.total_tokens,
+                        cached_tokens=response.cached_tokens,
+                        reasoning_tokens=response.reasoning_tokens,
+                        total_tokens_estimated=response.total_tokens_estimated,
                         latency_ms=response.latency_ms,
                         request_id=response.request_id,
                         retries=response.retries,
@@ -148,6 +164,10 @@ class SemanticMatcher:
                     schema_valid=False,
                     token_in=0,
                     token_out=0,
+                    total_tokens=0,
+                    cached_tokens=0,
+                    reasoning_tokens=0,
+                    total_tokens_estimated=False,
                     latency_ms=0.0,
                     request_id=exc.request_id,
                     retries=exc.retries,

@@ -27,11 +27,27 @@ class LLMChatResponse:
     content: str
     token_in: int
     token_out: int
+    total_tokens: int
+    cached_tokens: int
+    reasoning_tokens: int
+    total_tokens_estimated: bool
     latency_ms: float
     request_id: str
     retries: int
     error_code: str | None
     cached: bool
+
+
+@dataclass(frozen=True, slots=True)
+class LLMTokenUsage:
+    """LLM token 用量明细。"""
+
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    cached_tokens: int
+    reasoning_tokens: int
+    total_tokens_estimated: bool
 
 
 class LLMClientError(RuntimeError):
@@ -112,11 +128,15 @@ class OpenAICompatibleClient:
                 body, request_id = self._send_request(messages)
                 parsed = self._parse_response_body(body)
                 content = self._extract_content(parsed, body)
-                token_in, token_out = self._extract_tokens(parsed)
+                usage = self._extract_tokens(parsed)
                 response = LLMChatResponse(
                     content=content,
-                    token_in=token_in,
-                    token_out=token_out,
+                    token_in=usage.prompt_tokens,
+                    token_out=usage.completion_tokens,
+                    total_tokens=usage.total_tokens,
+                    cached_tokens=usage.cached_tokens,
+                    reasoning_tokens=usage.reasoning_tokens,
+                    total_tokens_estimated=usage.total_tokens_estimated,
                     latency_ms=(time.perf_counter() - started) * 1000,
                     request_id=request_id or str(parsed.get("id", "")),
                     retries=attempt - 1,
@@ -202,13 +222,44 @@ class OpenAICompatibleClient:
             raise ValueError(f"缺少 choices.message.content: {body[:300]}") from exc
 
     @staticmethod
-    def _extract_tokens(parsed: dict[str, Any]) -> tuple[int, int]:
+    def _extract_tokens(parsed: dict[str, Any]) -> LLMTokenUsage:
         usage = parsed.get("usage")
         if not isinstance(usage, dict):
-            return 0, 0
-        return (
-            int(usage.get("prompt_tokens", 0) or 0),
-            int(usage.get("completion_tokens", 0) or 0),
+            return LLMTokenUsage(
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                cached_tokens=0,
+                reasoning_tokens=0,
+                total_tokens_estimated=False,
+            )
+
+        prompt_tokens = _as_int(usage.get("prompt_tokens"))
+        completion_tokens = _as_int(usage.get("completion_tokens"))
+        raw_total = usage.get("total_tokens")
+        if raw_total is None:
+            total_tokens = prompt_tokens + completion_tokens
+            total_tokens_estimated = True
+        else:
+            total_tokens = _as_int(raw_total)
+            total_tokens_estimated = False
+
+        prompt_details = usage.get("prompt_tokens_details")
+        completion_details = usage.get("completion_tokens_details")
+        cached_tokens = 0
+        reasoning_tokens = 0
+        if isinstance(prompt_details, dict):
+            cached_tokens = _as_int(prompt_details.get("cached_tokens"))
+        if isinstance(completion_details, dict):
+            reasoning_tokens = _as_int(completion_details.get("reasoning_tokens"))
+
+        return LLMTokenUsage(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            cached_tokens=cached_tokens,
+            reasoning_tokens=reasoning_tokens,
+            total_tokens_estimated=total_tokens_estimated,
         )
 
     def _build_cache_key(self, messages: list[dict[str, str]]) -> str:
@@ -239,6 +290,18 @@ class OpenAICompatibleClient:
                     content=str(response.get("content", "")),
                     token_in=int(response.get("token_in", 0) or 0),
                     token_out=int(response.get("token_out", 0) or 0),
+                    total_tokens=int(
+                        response.get(
+                            "total_tokens",
+                            (response.get("token_in", 0) or 0) + (response.get("token_out", 0) or 0),
+                        )
+                        or 0
+                    ),
+                    cached_tokens=int(response.get("cached_tokens", 0) or 0),
+                    reasoning_tokens=int(response.get("reasoning_tokens", 0) or 0),
+                    total_tokens_estimated=bool(
+                        response.get("total_tokens_estimated", "total_tokens" not in response)
+                    ),
                     latency_ms=float(response.get("latency_ms", 0.0) or 0.0),
                     request_id=str(response.get("request_id", "")),
                     retries=int(response.get("retries", 0) or 0),
@@ -276,6 +339,10 @@ class OpenAICompatibleClient:
                     "content": response.content,
                     "token_in": response.token_in,
                     "token_out": response.token_out,
+                    "total_tokens": response.total_tokens,
+                    "cached_tokens": response.cached_tokens,
+                    "reasoning_tokens": response.reasoning_tokens,
+                    "total_tokens_estimated": response.total_tokens_estimated,
                     "latency_ms": response.latency_ms,
                     "request_id": response.request_id,
                     "retries": response.retries,
@@ -303,3 +370,14 @@ class OpenAICompatibleClient:
             concurrent_enabled=self._settings.concurrent_enabled,
             max_concurrency=self._settings.max_concurrency,
         )
+
+
+def _as_int(value: object) -> int:
+    """容错读取整数值。"""
+
+    if value is None:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0

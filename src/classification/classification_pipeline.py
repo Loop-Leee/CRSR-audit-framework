@@ -27,6 +27,10 @@ class ChunkClassificationDiagnostic:
     schema_valid: bool
     token_in: int
     token_out: int
+    total_tokens: int
+    cached_tokens: int
+    reasoning_tokens: int
+    total_tokens_estimated: bool
     latency_ms: float
     request_id: str
     retries: int
@@ -180,6 +184,10 @@ def run_classification_with_diagnostics(
                         schema_valid=trace.schema_valid,
                         token_in=trace.token_in,
                         token_out=trace.token_out,
+                        total_tokens=trace.total_tokens,
+                        cached_tokens=trace.cached_tokens,
+                        reasoning_tokens=trace.reasoning_tokens,
+                        total_tokens_estimated=trace.total_tokens_estimated,
                         latency_ms=trace.latency_ms,
                         request_id=trace.request_id,
                         retries=trace.retries,
@@ -191,7 +199,8 @@ def run_classification_with_diagnostics(
 
                 logger.info(
                     "chunk 分类完成: file=%s, chunk_id=%s, keyword_hits=%s, semantic_hits=%s, final_hits=%s, "
-                    "token_in=%s, token_out=%s, latency_ms=%.2f, request_id=%s, retries=%s, error_code=%s, cache=%s, "
+                    "token_in=%s, token_out=%s, total_tokens=%s, cached_tokens=%s, reasoning_tokens=%s, "
+                    "total_tokens_estimated=%s, latency_ms=%.2f, request_id=%s, retries=%s, error_code=%s, cache=%s, "
                     "keyword_hits_list=%s, semantic_hits_list=%s, added=%s"
                     % (
                         file_path.name,
@@ -201,6 +210,10 @@ def run_classification_with_diagnostics(
                         len(final_risks),
                         trace.token_in,
                         trace.token_out,
+                        trace.total_tokens,
+                        trace.cached_tokens,
+                        trace.reasoning_tokens,
+                        trace.total_tokens_estimated,
                         trace.latency_ms,
                         trace.request_id or "-",
                         trace.retries,

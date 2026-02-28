@@ -98,6 +98,7 @@ def main() -> None:
 
     logger.info(f"实验配置: {json.dumps(run_config.to_dict(), ensure_ascii=False)}")
 
+    # 阶段 1：初始化产物目录并固化本次实验配置。
     writer = ArtifactWriter(output_root=output_root, logger=logger)
     layout = writer.prepare_layout(run_config.run_id)
     _write_run_config(run_config, layout.metrics_dir, logger)
@@ -108,9 +109,11 @@ def main() -> None:
         raise FileNotFoundError(f"未找到 Word 文件: {input_dir}")
     logger.info(f"实验输入文件数: {len(files)}")
 
+    # 阶段 2：统一执行 chunking，输出本 run 独立的 chunks 产物。
     for path in files:
         process_word_file(path, chunk_size, layout.chunks_dir, logger=logger)
 
+    # 阶段 3：基于 chunks 执行分类，并回收 chunk 级诊断信息。
     classification_result = run_classification_with_diagnostics(
         input_path=layout.chunks_dir,
         output_dir=layout.classified_dir,
@@ -118,12 +121,14 @@ def main() -> None:
         llm_settings=llm_settings,
         logger=logger,
     )
+    # 阶段 4：按统一口径聚合指标（质量+性能+稳定性）。
     metrics = compute_experiment_metrics(
         classified_files=classification_result.outputs,
         diagnostics=classification_result.chunk_diagnostics,
         ground_truth_path=ground_truth_path,
     )
 
+    # 阶段 5：统一落盘所有产物，并追加 results 汇总行。
     writer.write_diagnostics(classification_result.chunk_diagnostics, layout)
     writer.write_metrics(metrics, layout)
     writer.write_audit_result(classification_result.chunk_diagnostics, layout)
@@ -174,6 +179,7 @@ def _build_experiment_config(
     ground_truth_path: Path | None,
 ) -> ExperimentConfig:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # 指纹仅由关键实验参数构成，确保同参数组可稳定追溯。
     fingerprint_payload = {
         "run_name": args.run_name,
         "input_dir": str(input_dir),
@@ -268,11 +274,19 @@ def _result_fields() -> list[str]:
         "recall",
         "f1",
         "schema_valid_rate",
+        "avg_token_in",
+        "avg_token_out",
+        "avg_total_token",
         "avg_token",
+        "avg_reasoning_token",
+        "avg_cached_token",
         "avg_latency_ms",
+        "reasoning_token_ratio",
+        "cached_token_ratio",
         "conflict_rate",
         "cache_hit_rate",
         "llm_error_rate",
+        "total_tokens_estimated_rate",
         "chunk_count",
         "llm_called_count",
         "label_support",

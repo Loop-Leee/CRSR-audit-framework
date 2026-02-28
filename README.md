@@ -116,6 +116,7 @@ python3 main.py experiment \
 - 指标口径：`src/experiment/metrics.py`
 - 产物落盘：`src/experiment/artifact_writer.py`
 - 输出根目录：`data/experiments/`
+- 模块完整文档：`src/experiment/README.md`
 
 每次实验会生成：
 
@@ -138,7 +139,7 @@ data/experiments/
 
 - 配置参数：`run_id/timestamp/mode/model/temperature/chunk_size/max_concurrency/cache_*`
 - 质量指标：`precision/recall/f1`（有标注集时计算）
-- 运行指标：`schema_valid_rate/avg_token/avg_latency_ms/conflict_rate/cache_hit_rate/llm_error_rate`
+- 运行指标：`avg_token_in/avg_token_out/avg_total_token/reasoning_token_ratio/cached_token_ratio/avg_latency_ms/schema_valid_rate/conflict_rate/cache_hit_rate/llm_error_rate/total_tokens_estimated_rate`
 
 ## LLM 配置
 
