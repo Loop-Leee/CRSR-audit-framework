@@ -81,6 +81,23 @@ python3 main.py experiment \
   --ground-truth baseline
 ```
 
+4. `exp_cuad`（CUAD 实验）
+
+在 macOS 上推荐使用远端 OpenAI 兼容服务，不在本机加载大模型：
+
+```bash
+export LLM_BASE_URL="http://<your-server>/v1"
+export LLM_API_KEY="<optional>"
+export LLM_MODEL="Qwen2-72B-Instruct"
+
+python3 -m src.exp_cuad.run_infer \
+  --model Qwen2-72B-Instruct \
+  --backend openai \
+  --mode baseline \
+  --split test \
+  --out_jsonl outputs/cuad_baseline.jsonl
+```
+
 ## 模块说明
 
 ### chunking
@@ -140,6 +157,14 @@ data/experiments/
 - 配置参数：`run_id/timestamp/mode/model/temperature/chunk_size/max_concurrency/cache_*`
 - 质量指标：`precision/recall/f1`（有标注集时计算）
 - 运行指标：`avg_token_in/avg_token_out/avg_total_token/reasoning_token_ratio/cached_token_ratio/avg_latency_ms/schema_valid_rate/conflict_rate/cache_hit_rate/llm_error_rate/total_tokens_estimated_rate`
+
+### exp_cuad
+
+- 目录：`src/exp_cuad/`
+- 入口：`python3 -m src.exp_cuad.run_infer`
+- 输出：`--out_jsonl` 指定的逐 `(doc,label)` 结构化预测记录
+- 汇总：命令结束后输出 JSON 指标摘要（micro/macro/evidence/laziness/inconsistency）
+- 模块完整文档：`src/exp_cuad/README.md`
 
 ## LLM 配置
 

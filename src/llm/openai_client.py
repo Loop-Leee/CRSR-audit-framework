@@ -408,11 +408,19 @@ class OpenAICompatibleClient:
             logger=self._logger,
         )
 
-    def chat(self, messages: list[dict[str, str]]) -> str:
+    def chat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str | None = None,
+        max_tokens: int | None = None,
+    ) -> str:
         """调用模型并返回文本内容。
 
         Args:
             messages: OpenAI Chat 消息列表。
+            model: 可选模型名覆盖；为空时使用 `LLMSettings.model`。
+            max_tokens: 可选最大生成 token 数。
 
         Returns:
             str: 模型输出文本。
@@ -421,13 +429,21 @@ class OpenAICompatibleClient:
             LLMClientError: 当请求失败且超过重试次数时抛出。
         """
 
-        return self.chat_with_metadata(messages).content
+        return self.chat_with_metadata(messages, model=model, max_tokens=max_tokens).content
 
-    def chat_with_metadata(self, messages: list[dict[str, str]]) -> LLMChatResponse:
+    def chat_with_metadata(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str | None = None,
+        max_tokens: int | None = None,
+    ) -> LLMChatResponse:
         """调用模型并返回文本与调用元数据。
 
         Args:
             messages: OpenAI Chat 消息列表。
+            model: 可选模型名覆盖；为空时使用 `LLMSettings.model`。
+            max_tokens: 可选最大生成 token 数。
 
         Returns:
             LLMChatResponse: 包含文本、token、时延、缓存命中等信息。
@@ -436,10 +452,13 @@ class OpenAICompatibleClient:
             LLMClientError: 当请求失败且超过重试次数时抛出。
         """
 
-        cache_key, key_meta = self._build_cache_key(messages)
+        cache_key, key_meta = self._build_cache_key(messages, model=model, max_tokens=max_tokens)
         cached = self._cache.get(cache_key)
         if cached is not None:
-            return cached
+            if _is_invalid_content(cached.content):
+                self._logger.info("LLM 缓存命中但内容无效，忽略缓存并重新请求。")
+            else:
+                return cached
 
         attempts = self._settings.max_retries + 1
         last_error: LLMClientError | None = None
@@ -447,7 +466,7 @@ class OpenAICompatibleClient:
             started = time.perf_counter()
             request_id = ""
             try:
-                body, request_id = self._send_request(messages)
+                body, request_id = self._send_request(messages, model=model, max_tokens=max_tokens)
                 parsed = self._parse_response_body(body)
                 content = self._extract_content(parsed, body)
                 usage = self._extract_tokens(parsed)
@@ -465,6 +484,12 @@ class OpenAICompatibleClient:
                     error_code=None,
                     cached=False,
                 )
+                if _is_invalid_content(response.content):
+                    self._logger.error(
+                        "LLM 返回空内容，跳过缓存: request_id=%s, token_out=%s, total_tokens=%s"
+                        % (response.request_id, response.token_out, response.total_tokens)
+                    )
+                    return response
                 self._cache.set(cache_key, response, key_meta)
                 return response
             except LLMClientError as exc:
@@ -503,7 +528,13 @@ class OpenAICompatibleClient:
 
         return self._cache.snapshot()
 
-    def _send_request(self, messages: list[dict[str, str]]) -> tuple[str, str]:
+    def _send_request(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str | None = None,
+        max_tokens: int | None = None,
+    ) -> tuple[str, str]:
         """执行单次 HTTP 请求。
 
         Args:
@@ -518,10 +549,12 @@ class OpenAICompatibleClient:
 
         endpoint = self._settings.base_url.rstrip("/") + "/chat/completions"
         payload = {
-            "model": self._settings.model,
+            "model": model or self._settings.model,
             "temperature": self._settings.temperature,
             "messages": messages,
         }
+        if max_tokens is not None:
+            payload["max_tokens"] = int(max_tokens)
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request = Request(
             endpoint,
@@ -588,9 +621,36 @@ class OpenAICompatibleClient:
         """
 
         try:
-            return str(parsed["choices"][0]["message"]["content"])
+            choice0 = parsed["choices"][0]
         except Exception as exc:  # noqa: BLE001
-            raise ValueError(f"缺少 choices.message.content: {body[:300]}") from exc
+            raise ValueError(f"缺少 choices 字段: {body[:300]}") from exc
+
+        message = choice0.get("message")
+        if isinstance(message, dict):
+            content = message.get("content")
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                parts: list[str] = []
+                for item in content:
+                    if not isinstance(item, dict):
+                        continue
+                    text = item.get("text")
+                    if isinstance(text, str):
+                        parts.append(text)
+                joined = "".join(parts).strip()
+                if joined:
+                    return joined
+            msg_text = message.get("text")
+            if isinstance(msg_text, str):
+                return msg_text
+
+        # 兼容部分 OpenAI-compatible 实现返回 choices[i].text。
+        choice_text = choice0.get("text")
+        if isinstance(choice_text, str):
+            return choice_text
+
+        return ""
 
     @staticmethod
     def _extract_tokens(parsed: dict[str, Any]) -> LLMTokenUsage:
@@ -642,7 +702,13 @@ class OpenAICompatibleClient:
             total_tokens_estimated=total_tokens_estimated,
         )
 
-    def _build_cache_key(self, messages: list[dict[str, str]]) -> tuple[str, dict[str, Any]]:
+    def _build_cache_key(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str | None = None,
+        max_tokens: int | None = None,
+    ) -> tuple[str, dict[str, Any]]:
         """生成缓存键与结构化键元数据。
 
         Args:
@@ -656,8 +722,9 @@ class OpenAICompatibleClient:
 
         payload = {
             "base_url": self._settings.base_url.rstrip("/"),
-            "model": self._settings.model,
+            "model": model or self._settings.model,
             "temperature": self._settings.temperature,
+            "max_tokens": max_tokens,
             "messages": messages,
         }
         serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
@@ -667,6 +734,7 @@ class OpenAICompatibleClient:
                 "base_url": payload["base_url"],
                 "model": payload["model"],
                 "temperature": payload["temperature"],
+                "max_tokens": payload["max_tokens"],
                 "message_count": len(messages),
             },
         )
@@ -725,3 +793,9 @@ def _as_int(value: object) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def _is_invalid_content(content: object) -> bool:
+    """判断模型文本是否为空或无效占位。"""
+    text = "" if content is None else str(content).strip()
+    return not text or text.lower() in {"none", "null"}
