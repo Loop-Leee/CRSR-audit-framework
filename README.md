@@ -161,11 +161,36 @@ data/experiments/
 `llm_config.json` 中可配置：
 
 - `max_retries`: HTTP/网络失败重试次数
-- `cache_enabled`: 是否开启持久化缓存
+- `cache_enabled`: 是否开启持久化缓存（`false` 可作为缓存消融开关）
 - `cache_path`: 缓存文件路径（JSONL）
 
 并发调用默认开启（`concurrent_enabled=true`，`max_concurrency=10`），
 可通过命令参数 `--disable-llm-concurrency` 关闭并发。
+
+### LLM 缓存方式
+
+缓存由 `src/llm/openai_client.py` 统一管理，采用“内存字典 + JSONL 追加写”策略：
+
+1. **缓存 key 计算方式**  
+   对以下字段构造 JSON（`sort_keys=True`）并执行 `SHA-256`：
+   - `base_url`（去尾部 `/`）
+   - `model`
+   - `temperature`
+   - `messages`（完整请求消息）
+
+2. **缓存命中方式**  
+   - 请求前先计算 `cache_key`；  
+   - 若内存缓存命中，直接返回并设置 `cached=true`；  
+   - 未命中则请求模型，成功后写入缓存。  
+   启动时会从 `cache_path` 加载历史 JSONL；同 key 重复时按“最后一条记录”覆盖。
+
+3. **缓存记录方式**  
+   每次缓存写入都会向 `cache_path` 追加一条结构化 JSONL 记录，包含：
+   - `event/cache_version/created_at/cache_key`
+   - `key_meta`（`base_url/model/temperature/message_count`）
+   - `response`（`content/token_in/token_out/total_tokens/cached_tokens/reasoning_tokens/latency_ms/request_id/retries`）
+
+可通过 `OpenAICompatibleClient.cache_stats()` 获取结构化统计指标（命中、未命中、写入成功、写入失败、加载异常、绕过次数等）。
 
 LLM 响应元数据（用于实验指标）：
 
@@ -183,6 +208,7 @@ LLM 响应元数据（用于实验指标）：
 - `chunking`: `log/chunking/*.log`
 - `classification`: `log/classification/*.log`
 - `experiment`: `log/experiment/*.log`
+- `llm`: `log/llm/*.log`
 
 - 关键步骤日志：`[info]`
 - 错误日志：`[error]`

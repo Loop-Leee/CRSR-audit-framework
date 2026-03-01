@@ -14,7 +14,19 @@ DEFAULT_LLM_CONFIG_PATH = MODULE_DIR / "llm_config.json"
 
 
 def load_dotenv_file(dotenv_path: Path) -> None:
-    """读取 .env 并写入环境变量（不覆盖已存在值）。"""
+    """读取 `.env` 文件并注入环境变量（不覆盖已有值）。
+
+    Args:
+        dotenv_path: `.env` 文件绝对路径。
+
+    Returns:
+        None
+
+    Notes:
+        - 仅解析 `KEY=VALUE` 格式；
+        - 跳过空行、注释行与非法行；
+        - 已存在于 `os.environ` 的变量不会被覆盖。
+    """
 
     if not dotenv_path.exists():
         return
@@ -36,7 +48,21 @@ def load_dotenv_file(dotenv_path: Path) -> None:
 
 @dataclass(frozen=True, slots=True)
 class LLMSettings:
-    """LLM 调用配置。"""
+    """LLM 调用配置。
+
+    Attributes:
+        enabled: 是否启用 LLM 语义能力。
+        api_key: 鉴权密钥（允许为空，适配无鉴权网关）。
+        base_url: OpenAI 兼容接口基础地址（不含 `/chat/completions`）。
+        model: 模型名称。
+        concurrent_enabled: 是否启用并发调用。
+        max_concurrency: 并发上限线程数。
+        temperature: 采样温度。
+        timeout_seconds: 单次请求超时时间（秒）。
+        max_retries: 失败重试次数（总尝试数为 `max_retries + 1`）。
+        cache_enabled: 是否启用持久化缓存（消融开关）。
+        cache_path: 缓存文件路径（JSONL）。
+    """
 
     enabled: bool
     api_key: str
@@ -52,7 +78,14 @@ class LLMSettings:
 
 
 def _normalize_base_url(raw_url: str) -> str:
-    """兼容传入 /v1 或 /v1/chat/completions 两种格式。"""
+    """标准化 OpenAI 兼容接口地址。
+
+    Args:
+        raw_url: 原始地址，可为 `.../v1` 或 `.../v1/chat/completions`。
+
+    Returns:
+        str: 去除尾部斜杠并统一到基础路径的 URL。
+    """
 
     base = raw_url.strip().rstrip("/")
     if base.endswith("/chat/completions"):
@@ -61,7 +94,14 @@ def _normalize_base_url(raw_url: str) -> str:
 
 
 def _resolve_path(path_value: str | Path) -> Path:
-    """将配置路径解析为绝对路径。"""
+    """将配置路径解析为项目根目录下的绝对路径。
+
+    Args:
+        path_value: 原始路径（绝对或相对）。
+
+    Returns:
+        Path: 解析后的绝对路径。
+    """
 
     raw = Path(path_value)
     if raw.is_absolute():
@@ -74,7 +114,27 @@ def load_llm_settings(
     enabled_override: bool | None = None,
     concurrent_enabled_override: bool | None = None,
 ) -> LLMSettings:
-    """加载统一 LLM 配置并注入环境变量。"""
+    """加载 LLM 配置并构建 `LLMSettings`。
+
+    Args:
+        config_path: 配置文件路径；为空时使用 `DEFAULT_LLM_CONFIG_PATH`。
+        enabled_override: 可选运行时开关，覆盖配置中的 `enabled`。
+        concurrent_enabled_override: 可选并发开关，覆盖配置中的 `concurrent_enabled`。
+
+    Returns:
+        LLMSettings: 标准化后的 LLM 设置对象。
+
+    Raises:
+        ValueError: 当 `timeout_seconds <= 0`、`max_retries < 0` 或
+            `max_concurrency <= 0` 时抛出配置错误。
+        FileNotFoundError: 配置文件不存在时由底层读取逻辑抛出。
+        json.JSONDecodeError: 配置文件 JSON 非法时由底层解析逻辑抛出。
+
+    Example:
+        >>> settings = load_llm_settings()
+        >>> settings.enabled
+        True
+    """
 
     load_dotenv_file(PROJECT_ROOT / ".env")
     path = config_path or DEFAULT_LLM_CONFIG_PATH
