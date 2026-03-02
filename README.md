@@ -52,7 +52,20 @@ python3 main.py classification --llm-config src/llm/llm_config.json
 python3 main.py classification --disable-llm-concurrency
 ```
 
-3. `experiment`（统一实验入口，固定参数并产出指标）
+3. `review`（规则化结构审查）
+
+```bash
+python3 main.py review
+```
+
+消融实验：
+
+```bash
+python3 main.py review --ablation-no-rules
+python3 main.py review --ablation-coarse-rules
+```
+
+4. `experiment`（统一实验入口，固定参数并产出指标）
 
 ```bash
 python3 main.py experiment \
@@ -81,7 +94,7 @@ python3 main.py experiment \
   --ground-truth baseline
 ```
 
-4. `exp_cuad`（CUAD 实验）
+5. `exp_cuad`（CUAD 实验）
 
 在 macOS 上推荐使用远端 OpenAI 兼容服务，不在本机加载大模型：
 
@@ -159,6 +172,23 @@ data/experiments/
 - 配置参数：`run_id/timestamp/mode/model/temperature/chunk_size/max_concurrency/cache_*`
 - 质量指标：`precision/recall/f1`（有标注集时计算）
 - 运行指标：`avg_token_in/avg_token_out/avg_total_token/reasoning_token_ratio/cached_token_ratio/avg_latency_ms/schema_valid_rate/conflict_rate/cache_hit_rate/llm_error_rate/total_tokens_estimated_rate`
+
+### review
+
+- 目录：`src/review/`
+- 输入：`data/3-classified/*.classified.json`
+- 输出：`data/4-review/*.review.json`
+- 规则源：`prompt/rule_hits_expanded.csv`（或 `.json`）
+- 规则管理：`RuleStore`（`rule_version` + 粗粒度规则版本构建）
+- 输出约束：`review_meta.rule_version` 为文件级元数据；`review_items` 含 `result`（仅 `合格/不合格`）
+- 稳定性：schema 不合规输出支持限次重试（`--schema-retry-limit`，默认 `1`，上限 `3`）
+- 运行产物：
+  - `data/4-review/review_trace.jsonl`
+  - `data/4-review/review_metrics.json`
+- 消融开关：
+  - `--ablation-no-rules`
+  - `--ablation-coarse-rules`
+- 模块完整文档：`src/review/README.md`
 
 ### exp_cuad
 
@@ -263,6 +293,7 @@ LLM 响应元数据（用于实验指标）：
 
 - `chunking`: `log/chunking/*.log`
 - `classification`: `log/classification/*.log`
+- `review`: `log/review/*.log`
 - `experiment`: `log/experiment/*.log`
 - `llm`: `log/llm/*.log`
 
