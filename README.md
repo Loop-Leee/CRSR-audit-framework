@@ -95,8 +95,10 @@ python3 -m src.exp_cuad.run_infer \
   --backend openai \
   --mode baseline \
   --split test \
-  --out_jsonl outputs/cuad_baseline.jsonl
+  --out_jsonl data/cuad/outputs/cuad_baseline.jsonl
 ```
+
+说明：实际文件名会自动追加“主要参数 + 时间戳 + 指纹”后缀，便于多次实验并存与追溯。
 
 ## 模块说明
 
@@ -162,9 +164,38 @@ data/experiments/
 
 - 目录：`src/exp_cuad/`
 - 入口：`python3 -m src.exp_cuad.run_infer`
-- 输出：`--out_jsonl` 指定的逐 `(doc,label)` 结构化预测记录
-- 汇总：命令结束后输出 JSON 指标摘要（micro/macro/evidence/laziness/inconsistency）
+- 输出：
+  - `<out_jsonl + 参数后缀 + 时间戳 + 指纹>.jsonl`：逐 `(doc,label)` 结构化预测记录
+  - `<...>.jsonl.progress.jsonl`：运行过程事件流（`run_start/chunk_result/pair_result/run_end`）
+  - `<...>.jsonl.summary.json`：最终汇总（precision/recall/f1、macro、evidence、LLM 用量统计）
+- 支持输出消融开关：
+  - `--disable_llm_usage_output`
+  - `--disable_extended_pair_metrics_output`
 - 模块完整文档：`src/exp_cuad/README.md`
+
+仅基于最新 CUAD 输出复算 `precision/recall/f1` 示例：
+
+```bash
+python3 - <<'PY'
+import json
+import subprocess
+from pathlib import Path
+
+latest = subprocess.check_output(
+    "ls -t data/cuad/outputs/cuad_baseline_*.jsonl | head -1",
+    shell=True,
+    text=True,
+).strip()
+rows=[json.loads(x) for x in Path(latest).read_text(encoding='utf-8').splitlines() if x.strip()]
+tp=sum(1 for r in rows if r['present_pred'] and r['present_gt'])
+fp=sum(1 for r in rows if r['present_pred'] and not r['present_gt'])
+fn=sum(1 for r in rows if (not r['present_pred']) and r['present_gt'])
+precision=tp/(tp+fp) if (tp+fp) else 0.0
+recall=tp/(tp+fn) if (tp+fn) else 0.0
+f1=(2*precision*recall/(precision+recall)) if (precision+recall) else 0.0
+print({'precision':precision,'recall':recall,'f1':f1,'tp':tp,'fp':fp,'fn':fn,'pairs':len(rows)})
+PY
+```
 
 ## LLM 配置
 
