@@ -85,6 +85,24 @@ python3 main.py experiment \
   --chunk-size 1000
 ```
 
+仅跑 LLM 基线（不执行 keyword 逻辑）：
+
+```bash
+python3 main.py experiment \
+  --run-name exp_llm_only \
+  --mode llm_only \
+  --chunk-size 1000
+```
+
+单次输出三路消融（只进行一次 keyword 匹配 + 一次 llm 匹配）：
+
+```bash
+python3 main.py experiment \
+  --run-name exp_onepass \
+  --mode keyword_llm_experiment \
+  --chunk-size 1000
+```
+
 带标注集（用于 P/R/F1）：
 
 ```bash
@@ -159,17 +177,23 @@ data/experiments/
   <run_id>/
     chunks/*.chunks.json
     classified/*.classified.json
+    classified/keyword_only/*.classified.json      # keyword_llm_experiment
+    classified/llm_only/*.classified.json          # keyword_llm_experiment
+    classified/keyword_llm/*.classified.json       # keyword_llm_experiment
     audit_result/audit_result.json
     final_report/final_report.md
+    final_report/final_report_*.md                 # keyword_llm_experiment
     metrics/
       experiment_config.json
       llm_trace.jsonl
       metrics.json
+      metrics_*.json                               # keyword_llm_experiment
 ```
 
 `results.csv` 包含实验参数与核心指标：
 
 - 配置参数：`run_id/timestamp/mode/model/temperature/chunk_size/max_concurrency/cache_*`
+- 复合模式标识：`experiment_mode`（用于区分 `keyword_llm_experiment`）
 - 质量指标：`precision/recall/f1`（有标注集时计算）
 - 运行指标：`avg_token_in/avg_token_out/avg_total_token/reasoning_token_ratio/cached_token_ratio/avg_latency_ms/schema_valid_rate/conflict_rate/cache_hit_rate/llm_error_rate/total_tokens_estimated_rate`
 

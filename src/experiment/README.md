@@ -36,6 +36,15 @@ python3 main.py experiment \
   --chunk-size 1000
 ```
 
+纯 LLM 基线（不执行 keyword 逻辑）：
+
+```bash
+python3 main.py experiment \
+  --run-name baseline_llm \
+  --mode llm_only \
+  --chunk-size 1000
+```
+
 ### 阶段 C：主实验（关键词 + LLM）
 
 目标：采集质量指标 + 成本/时延/稳定性指标。
@@ -64,7 +73,25 @@ python3 main.py experiment --run-name grid_p5 --mode keyword_llm --chunk-size 10
 python3 main.py experiment --run-name grid_p10 --mode keyword_llm --chunk-size 1000 --max-concurrency 10
 ```
 
-### 阶段 E：标注评估实验
+### 阶段 E：单次三路消融（keyword+llm / keyword_only / llm_only）
+
+目标：一次 keyword + 一次 llm，产出三套分类结果与三行汇总。
+
+```bash
+python3 main.py experiment \
+  --run-name onepass_ablation \
+  --mode keyword_llm_experiment \
+  --chunk-size 1000 \
+  --disable-cache
+```
+
+口径说明：
+
+- `keyword_only` 行使用 keyword-only 诊断口径：`llm_called_count=0`，token/latency/error 统计均为 `0`。
+- `llm_only` 行使用 llm-only 诊断口径：仅统计 LLM 语义链路。
+- `keyword_llm` 行使用组合口径：统计 keyword+llm 的最终结果与 LLM 运行指标。
+
+### 阶段 F：标注评估实验
 
 目标：输出 `precision/recall/f1`，用于论文主表。
 
@@ -90,7 +117,7 @@ python3 main.py experiment
 | 参数 | 含义 | 默认值 |
 |---|---|---|
 | `--run-name` | 实验名（会进入 `run_id`） | `experiment` |
-| `--mode` | `keyword_only` / `keyword_llm` | `keyword_llm` |
+| `--mode` | `keyword_only` / `llm_only` / `keyword_llm` / `keyword_llm_experiment` | `keyword_llm` |
 | `--chunk-size` | 分块上限（字符） | `1000` |
 | `--input-dir` | 原始 Word 输入目录 | 使用 chunking 配置 |
 | `--risk-info` | 风险类型 CSV 路径 | 使用 classification 配置 |
@@ -114,14 +141,19 @@ data/experiments/
   <run_id>/
     chunks/
     classified/
+      keyword_only/          # 仅 keyword_llm_experiment 下存在
+      llm_only/              # 仅 keyword_llm_experiment 下存在
+      keyword_llm/           # 仅 keyword_llm_experiment 下存在
     audit_result/
       audit_result.json
     final_report/
-      final_report.md
+      final_report.md        # 单策略模式
+      final_report_*.md      # keyword_llm_experiment
     metrics/
       experiment_config.json
       llm_trace.jsonl
-      metrics.json
+      metrics.json           # 单策略模式
+      metrics_*.json         # keyword_llm_experiment
 ```
 
 ### 4.2 `log/experiment` 结构
@@ -144,7 +176,7 @@ log/
 | `分块完成` | chunking 输出完成 |
 | `chunk 分类完成` | 每个 chunk 分类完成，含 LLM 诊断字段 |
 | `诊断明细写入完成` | `metrics/llm_trace.jsonl` 已写出 |
-| `指标写入完成` | `metrics/metrics.json` 已写出 |
+| `指标写入完成` | `metrics/metrics*.json` 已写出 |
 | `results 追加完成` | `results.csv/jsonl` 已写入一行 |
 | `实验完成` | 本次 run 结束 |
 
@@ -173,7 +205,8 @@ log/
 | `run_id` | 唯一实验 ID |
 | `timestamp` | 实验开始时间（ISO） |
 | `run_name` | 用户指定实验名 |
-| `mode` | 实验模式 |
+| `mode` | 当前结果行对应的分类策略 |
+| `experiment_mode` | 启动时指定模式（用于区分 `keyword_llm_experiment`） |
 | `model` | 实际模型名 |
 | `temperature` | 推理温度 |
 | `chunk_size` | 分块大小 |
@@ -243,12 +276,13 @@ log/
 
 - 入口函数：`main()`
 - 职责：
-  - 读取参数与配置
-  - 固定 run_id（参数指纹）
-  - 执行 chunking + classification
-  - 调用 metrics 聚合
-  - 调用 artifact_writer 统一落盘
-  - 追加 `results.csv/jsonl`
+- 读取参数与配置
+- 固定 run_id（参数指纹）
+- 执行 chunking + classification
+- 按 `--mode` 执行单策略或单次三路消融
+- 调用 metrics 聚合
+- 调用 artifact_writer 统一落盘
+- 追加 `results.csv/jsonl`
 
 ### `metrics.py`
 

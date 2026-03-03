@@ -14,7 +14,7 @@ from src.chunking.chunking_config import clamp_chunk_size, load_chunking_config
 from src.chunking.word_chunking_pipeline import process_word_file
 from src.chunking.word_text_extractor import discover_word_files
 from src.classification.classification_config import load_classification_config
-from src.classification.classification_pipeline import run_classification_with_diagnostics
+from src.classification.classification_pipeline import ClassificationStrategy, run_classification_with_diagnostics
 from src.llm import DEFAULT_LLM_CONFIG_PATH, LLMSettings, load_llm_settings
 from src.tools.logger import Logger, get_logger
 
@@ -59,7 +59,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ground-truth", type=Path, default=None, help="标注集路径（目录/JSON/JSONL）")
     parser.add_argument("--llm-config", type=Path, default=DEFAULT_LLM_CONFIG_PATH, help="LLM 配置文件路径")
     parser.add_argument("--chunk-size", type=int, default=1000, help="分块字符上限")
-    parser.add_argument("--mode", choices=["keyword_only", "keyword_llm"], default="keyword_llm", help="实验模式")
+    parser.add_argument(
+        "--mode",
+        choices=["keyword_only", "llm_only", "keyword_llm", "keyword_llm_experiment"],
+        default="keyword_llm",
+        help="实验模式",
+    )
     parser.add_argument("--model", type=str, default=None, help="覆盖模型名称")
     parser.add_argument("--temperature", type=float, default=None, help="覆盖温度参数")
     parser.add_argument("--max-concurrency", type=int, default=None, help="覆盖并发数")
@@ -113,6 +118,8 @@ def main() -> None:
     for path in files:
         process_word_file(path, chunk_size, layout.chunks_dir, logger=logger)
 
+    classification_strategy, emit_all_variants = _resolve_classification_plan(args.mode)
+
     # 阶段 3：基于 chunks 执行分类，并回收 chunk 级诊断信息。
     classification_result = run_classification_with_diagnostics(
         input_path=layout.chunks_dir,
@@ -120,26 +127,54 @@ def main() -> None:
         risk_info_path=risk_info_path,
         llm_settings=llm_settings,
         logger=logger,
+        strategy=classification_strategy,
+        emit_all_variants=emit_all_variants,
     )
+    mode_to_outputs = (
+        classification_result.outputs_by_mode
+        if emit_all_variants
+        else {classification_strategy: classification_result.outputs}
+    )
+    mode_to_diagnostics = (
+        classification_result.diagnostics_by_mode
+        if emit_all_variants
+        else {classification_strategy: classification_result.chunk_diagnostics}
+    )
+
     # 阶段 4：按统一口径聚合指标（质量+性能+稳定性）。
-    metrics = compute_experiment_metrics(
-        classified_files=classification_result.outputs,
-        diagnostics=classification_result.chunk_diagnostics,
-        ground_truth_path=ground_truth_path,
-    )
+    metrics_by_mode: dict[str, ExperimentMetrics] = {}
+    for mode, classified_files in mode_to_outputs.items():
+        metrics_by_mode[mode] = compute_experiment_metrics(
+            classified_files=classified_files,
+            diagnostics=mode_to_diagnostics[mode],
+            ground_truth_path=ground_truth_path,
+        )
 
     # 阶段 5：统一落盘所有产物，并追加 results 汇总行。
     writer.write_diagnostics(classification_result.chunk_diagnostics, layout)
-    writer.write_metrics(metrics, layout)
     writer.write_audit_result(classification_result.chunk_diagnostics, layout)
-    summary_row = _build_summary_row(run_config, metrics, len(files), len(classification_result.outputs))
-    writer.write_final_report(summary_row, metrics, layout)
-    csv_path, jsonl_path = writer.append_results(summary_row, _result_fields())
+    csv_path: Path | None = None
+    jsonl_path: Path | None = None
+    for mode, metrics in metrics_by_mode.items():
+        artifact_suffix = mode if emit_all_variants else ""
+        summary_row = _build_summary_row(
+            run_config,
+            metrics,
+            len(files),
+            len(mode_to_outputs[mode]),
+            result_mode=mode,
+            result_run_id=f"{run_config.run_id}__{mode}" if emit_all_variants else run_config.run_id,
+        )
+        writer.write_metrics(metrics, layout, artifact_suffix=artifact_suffix)
+        writer.write_final_report(summary_row, metrics, layout, artifact_suffix=artifact_suffix)
+        csv_path, jsonl_path = writer.append_results(summary_row, _result_fields())
 
     logger.info(
-        "实验完成: run_id=%s, classified=%s, metrics=%s, results_csv=%s"
-        % (run_config.run_id, len(classification_result.outputs), layout.metrics_dir / "metrics.json", csv_path)
+        "实验完成: run_id=%s, modes=%s, results_csv=%s"
+        % (run_config.run_id, list(mode_to_outputs.keys()), csv_path)
     )
+    if csv_path is None or jsonl_path is None:
+        raise RuntimeError("实验未产出 results 记录，请检查分类输出。")
     print(f"[OK] run_id={run_config.run_id}")
     print(f"[OK] results_csv={csv_path}")
     print(f"[OK] results_jsonl={jsonl_path}")
@@ -222,12 +257,16 @@ def _build_summary_row(
     metrics: ExperimentMetrics,
     file_count: int,
     classified_count: int,
+    *,
+    result_mode: str,
+    result_run_id: str,
 ) -> dict[str, Any]:
     row = {
-        "run_id": config.run_id,
+        "run_id": result_run_id,
         "timestamp": config.timestamp,
         "run_name": config.run_name,
-        "mode": config.mode,
+        "mode": result_mode,
+        "experiment_mode": config.mode,
         "model": config.model,
         "temperature": config.temperature,
         "chunk_size": config.chunk_size,
@@ -258,6 +297,7 @@ def _result_fields() -> list[str]:
         "timestamp",
         "run_name",
         "mode",
+        "experiment_mode",
         "model",
         "temperature",
         "chunk_size",
@@ -291,6 +331,16 @@ def _result_fields() -> list[str]:
         "llm_called_count",
         "label_support",
     ]
+
+
+def _resolve_classification_plan(mode: str) -> tuple[ClassificationStrategy, bool]:
+    if mode == "keyword_llm_experiment":
+        return "keyword_llm", True
+    if mode == "keyword_only":
+        return "keyword_only", False
+    if mode == "llm_only":
+        return "llm_only", False
+    return "keyword_llm", False
 
 
 def _safe_name(value: str) -> str:

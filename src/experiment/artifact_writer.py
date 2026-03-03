@@ -80,10 +80,11 @@ class ArtifactWriter:
         self,
         metrics: ExperimentMetrics,
         layout: ExperimentLayout,
+        artifact_suffix: str = "",
     ) -> Path:
         """写入聚合指标。"""
 
-        output = layout.metrics_dir / "metrics.json"
+        output = layout.metrics_dir / _artifact_filename("metrics", "json", artifact_suffix)
         output.write_text(json.dumps(metrics.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
         self._logger.info(f"指标写入完成: {output}")
         return output
@@ -123,6 +124,7 @@ class ArtifactWriter:
         run_summary: dict[str, Any],
         metrics: ExperimentMetrics,
         layout: ExperimentLayout,
+        artifact_suffix: str = "",
     ) -> Path:
         """写入统一最终报告。"""
 
@@ -157,7 +159,7 @@ class ArtifactWriter:
             f"- llm_error_rate: {metrics.llm_error_rate:.6f}",
             f"- total_tokens_estimated_rate: {metrics.total_tokens_estimated_rate:.6f}",
         ]
-        output = layout.final_report_dir / "final_report.md"
+        output = layout.final_report_dir / _artifact_filename("final_report", "md", artifact_suffix)
         output.write_text("\n".join(lines) + "\n", encoding="utf-8")
         self._logger.info(f"final_report 写入完成: {output}")
         return output
@@ -193,6 +195,12 @@ def _normalize_cell(value: Any) -> Any:
     if isinstance(value, (dict, list)):
         return json.dumps(value, ensure_ascii=False)
     return value
+
+
+def _artifact_filename(base_name: str, extension: str, suffix: str) -> str:
+    if not suffix:
+        return f"{base_name}.{extension}"
+    return f"{base_name}_{suffix}.{extension}"
 
 
 def _ensure_csv_schema(csv_path: Path, fieldnames: list[str]) -> None:
