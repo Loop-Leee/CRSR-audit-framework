@@ -139,6 +139,7 @@ def run_review(
     ablation_no_rules: bool = False,
     ablation_coarse_rules: bool = False,
     schema_retry_limit: int = 1,
+    ground_truth: str = "待审核",
 ) -> list[Path]:
     """执行审查主流程（兼容接口，仅返回输出文件列表）。
 
@@ -152,6 +153,7 @@ def run_review(
         ablation_no_rules: 是否关闭规则注入消融。
         ablation_coarse_rules: 是否启用粗粒度规则消融。
         schema_retry_limit: 单任务 schema 失败重试上限。
+        ground_truth: 写入每条 review_item 的人工标注初值。
 
     Returns:
         list[Path]: 输出 `*.review.json` 文件路径列表。
@@ -167,6 +169,7 @@ def run_review(
         ablation_no_rules=ablation_no_rules,
         ablation_coarse_rules=ablation_coarse_rules,
         schema_retry_limit=schema_retry_limit,
+        ground_truth=ground_truth,
     ).outputs
 
 
@@ -181,6 +184,7 @@ def run_review_with_diagnostics(
     ablation_no_rules: bool = False,
     ablation_coarse_rules: bool = False,
     schema_retry_limit: int = 1,
+    ground_truth: str = "待审核",
 ) -> ReviewRunResult:
     """执行结构化审查并输出诊断、指标。
 
@@ -194,6 +198,7 @@ def run_review_with_diagnostics(
         ablation_no_rules: 是否关闭规则注入消融。
         ablation_coarse_rules: 是否启用粗粒度规则消融。
         schema_retry_limit: 单任务 schema 失败重试上限。
+        ground_truth: 写入每条 review_item 的人工标注初值。
 
     Returns:
         ReviewRunResult: 输出文件、任务级诊断和聚合指标。
@@ -235,11 +240,21 @@ def run_review_with_diagnostics(
         ablation_no_rules=ablation_no_rules,
         schema_retry_limit=schema_retry_limit,
     )
+    ground_truth_value = ground_truth.strip() or "待审核"
 
     logger.info(
         "review_start: file_count=%s, input=%s, output=%s, rule_version=%s, ablation_no_rules=%s, "
-        "ablation_coarse_rules=%s, schema_retry_limit=%s"
-        % (len(files), input_path, output_dir, effective_rule_version, ablation_no_rules, ablation_coarse_rules, schema_retry_limit,)
+        "ablation_coarse_rules=%s, schema_retry_limit=%s, ground_truth=%s"
+        % (
+            len(files),
+            input_path,
+            output_dir,
+            effective_rule_version,
+            ablation_no_rules,
+            ablation_coarse_rules,
+            schema_retry_limit,
+            ground_truth_value,
+        )
     )
 
     outputs: list[Path] = []
@@ -284,7 +299,7 @@ def run_review_with_diagnostics(
                         rule_version=effective_rule_version,
                     )
                     span_offset = _find_span_offset(raw["span"], task.content)
-                    if span_offset != "UNKNOWN":
+                    if span_offset is not None:
                         span_matched_count += 1
                     if resolved_rule_hit_id != "UNKNOWN":
                         known_rule_id_count += 1
@@ -314,6 +329,7 @@ def run_review_with_diagnostics(
                             "span": raw["span"],
                             "span_offset": span_offset,
                             "suggest": raw["suggest"],
+                            "ground_truth": ground_truth_value,
                         }
                     )
                     emitted_item_count += 1
@@ -586,14 +602,14 @@ def _normalize_text(text: str) -> str:
     return "".join(ch for ch in text if not ch.isspace())
 
 
-def _find_span_offset(span: str, content: str) -> list[int] | str:
+def _find_span_offset(span: str, content: str) -> list[int] | None:
     """在 chunk 文本中定位 span 偏移，返回 [start, end)。"""
 
     if not span:
-        return "UNKNOWN"
+        return None
     start = content.find(span)
     if start < 0:
-        return "UNKNOWN"
+        return None
     return [start, start + len(span)]
 
 

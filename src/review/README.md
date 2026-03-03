@@ -22,6 +22,12 @@ python3 main.py review --input data/3-classified --output data/4-review
 python3 main.py review --rules prompt/rule_hits_expanded.csv --rule-version v1
 ```
 
+设置写入到每条 review_item 的 `ground_truth` 初始值（默认 `待审核`）：
+
+```bash
+python3 main.py review --ground_truth 待审核
+```
+
 关闭并发：
 
 ```bash
@@ -72,6 +78,7 @@ python3 main.py review --ablation-coarse-rules
   "chunk_id": 2,
   "risk_type": "付款时间审查",
   "result": "不合格",
+  "ground_truth": "待审核",
   "rule_hit": "付款节点超过验收后90天，违反规则",
   "rule_hit_id": "付款时间审查:02",
   "span": "验收合格后120日内付款",
@@ -83,11 +90,99 @@ python3 main.py review --ablation-coarse-rules
 其中程序补全字段：
 
 - `chunk_id`
-- `span_offset`（匹配失败为 `"UNKNOWN"`）
+- `span_offset`（匹配失败为 `null`）
 - `rule_hit_id`（无法匹配规则库时为 `"UNKNOWN"`）
+- `ground_truth`（默认 `"待审核"`，人工标注后可改为 `"合格"` 或 `"不合格"`）
 - `risk_id`（`doc_id#c{chunk_id}#rt{risk_type}#r{rule_hit_id}#{idx}`）
 
 说明：`doc_id` 与 `rule_version` 仅出现在 `review_meta`，不在 `review_items` 重复。
+
+### review_trace.jsonl 字段说明
+
+`review_trace.jsonl` 为 JSONL 文件，每行对应一个 `(chunk_id, risk_type)` 审查任务。
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `source_file` | `str` | 原始合同文件路径（来自 classified 输入）。 |
+| `doc_id` | `str` | 文档唯一标识。 |
+| `chunk_id` | `int \| str` | 分块编号。 |
+| `risk_type` | `str` | 本任务审查类型。 |
+| `candidate_rule_count` | `int` | 注入给模型的候选规则数量。 |
+| `llm_called` | `bool` | 本任务是否实际调用了 LLM。 |
+| `schema_valid` | `bool` | 模型输出是否通过 schema 校验。 |
+| `item_count` | `int` | 本任务最终解析出的命中项数量。 |
+| `token_in` | `int` | 输入 token 数。 |
+| `token_out` | `int` | 输出 token 数。 |
+| `total_tokens` | `int` | 总 token 数。 |
+| `cached_tokens` | `int` | prompt 侧缓存命中 token 数。 |
+| `reasoning_tokens` | `int` | completion 侧推理 token 数。 |
+| `total_tokens_estimated` | `bool` | `total_tokens` 是否为回填估算值。 |
+| `latency_ms` | `float` | 单次请求耗时（毫秒）。 |
+| `request_id` | `str` | 上游接口请求 ID（若有）。 |
+| `retries` | `int` | LLM HTTP/网络层重试次数。 |
+| `error_code` | `str \| null` | 失败错误码（如 `invalid_schema`、`timeout`、`network_error`）。 |
+| `cached` | `bool` | 是否命中 LLM 响应缓存。 |
+| `schema_retries` | `int` | schema 校验失败后的补救重试次数。 |
+
+### review_metrics.json 字段说明
+
+`review_metrics.json` 为单次运行的聚合统计结果。
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `file_count` | `int` | 成功输出的 `.review.json` 文件数量。 |
+| `chunk_count` | `int` | 本次处理的 chunk 总数。 |
+| `task_count` | `int` | 审查任务总数（`chunk × risk_type`）。 |
+| `emitted_item_count` | `int` | 最终输出的 `review_items` 总数。 |
+| `llm_called_count` | `int` | 实际触发 LLM 的任务数。 |
+| `schema_valid_rate` | `float` | LLM 任务中 schema 校验通过率。 |
+| `llm_error_rate` | `float` | LLM 任务中接口失败率（含超时/网络等）。 |
+| `span_match_rate` | `float` | 输出项里 `span_offset` 成功定位比例。 |
+| `rule_id_known_rate` | `float` | 输出项里 `rule_hit_id != "UNKNOWN"` 比例。 |
+| `avg_token_in` | `float` | LLM 任务平均输入 token。 |
+| `avg_token_out` | `float` | LLM 任务平均输出 token。 |
+| `avg_total_token` | `float` | LLM 任务平均总 token。 |
+| `avg_latency_ms` | `float` | LLM 任务平均耗时（毫秒）。 |
+| `schema_retry_count` | `int` | 本次运行累计 schema 补救重试次数。 |
+| `ablation_no_rules` | `bool` | 是否启用“不注入规则”消融。 |
+| `ablation_coarse_rules` | `bool` | 是否启用“粗粒度规则”消融。 |
+| `rule_version` | `str` | 本次运行使用的规则版本。 |
+
+## 一致性评估脚本（TP/FP/TN/FN）
+
+脚本路径：`src/review/review_eval.py`
+
+运行示例：
+
+```bash
+python3 -m src.review.review_eval --input data/4-review
+```
+
+写出评估结果 JSON：
+
+```bash
+python3 -m src.review.review_eval --input data/4-review --output data/4-review/review_eval.json
+```
+
+输出字段说明：
+
+| 字段 | 含义 |
+| --- | --- |
+| `tp` | 预测 `不合格` 且标注 `不合格` 的条数。 |
+| `fp` | 预测 `不合格` 但标注 `合格` 的条数。 |
+| `tn` | 预测 `合格` 且标注 `合格` 的条数。 |
+| `fn` | 预测 `合格` 但标注 `不合格` 的条数。 |
+| `evaluated_item_count` | 参与计算的条数（`ground_truth` 已标注为 `合格/不合格`）。 |
+| `unlabeled_item_count` | 未参与计算的条数（`ground_truth` 不是 `合格/不合格`，如 `待审核`）。 |
+| `invalid_pred_item_count` | 未参与计算的条数（`result` 不是 `合格/不合格`）。 |
+| `total_item_count` | 扫描到的 review_items 总数。 |
+| `file_count` | 参与扫描的 `.review.json` 文件数。 |
+| `input_path` | 评估输入路径。 |
+| `precision` | 正类（`不合格`）精确率。 |
+| `recall` | 正类（`不合格`）召回率。 |
+| `f1` | 正类（`不合格`）F1。 |
+| `accuracy` | `(TP+TN)/evaluated_item_count`。 |
+| `positive_label` | 当前正类标签，固定为 `不合格`。 |
 
 ## RuleStore
 

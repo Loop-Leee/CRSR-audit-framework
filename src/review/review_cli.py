@@ -22,6 +22,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, default=None, help="review 输出目录")
     parser.add_argument("--rules", type=Path, default=None, help="expanded 规则文件路径（csv/json）")
     parser.add_argument("--rule-version", type=str, default=None, help="规则版本号，默认读取配置")
+    parser.add_argument(
+        "--ground_truth",
+        type=str,
+        default="待审核",
+        help="写入每条 review_item 的人工标注初值（默认：待审核）",
+    )
     parser.add_argument("--disable-llm", action="store_true", help="禁用 LLM（仅用于流程调试）")
     parser.add_argument("--disable-llm-concurrency", action="store_true", help="关闭 LLM 并发，改为串行")
     parser.add_argument("--ablation-no-rules", action="store_true", help="消融：不注入规则列表")
@@ -75,6 +81,7 @@ def main() -> None:
         ablation_no_rules=args.ablation_no_rules,
         ablation_coarse_rules=args.ablation_coarse_rules,
         schema_retry_limit=schema_retry_limit,
+        ground_truth=args.ground_truth,
     )
 
     for output in result.outputs:

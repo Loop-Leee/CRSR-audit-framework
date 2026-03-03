@@ -181,7 +181,9 @@ data/experiments/
 - 规则源：`prompt/rule_hits_expanded.csv`（或 `.json`）
 - 规则管理：`RuleStore`（`rule_version` + 粗粒度规则版本构建）
 - 输出约束：`review_meta.rule_version` 为文件级元数据；`review_items` 含 `result`（仅 `合格/不合格`）
+- 标注字段：`review_items.ground_truth` 默认写入 `待审核`（可用 `--ground_truth` 覆盖）
 - 稳定性：schema 不合规输出支持限次重试（`--schema-retry-limit`，默认 `1`，上限 `3`）
+- 评估脚本：`python3 -m src.review.review_eval --input data/4-review`（输出 TP/FP/TN/FN）
 - 运行产物：
   - `data/4-review/review_trace.jsonl`
   - `data/4-review/review_metrics.json`
