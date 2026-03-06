@@ -65,7 +65,26 @@ python3 main.py review --ablation-no-rules
 python3 main.py review --ablation-coarse-rules
 ```
 
-4. `experiment`（统一实验入口，固定参数并产出指标）
+4. `result`（依据 review 的 span 在 `5-result` 副本写入 Word 批注，不改源文件）
+
+```bash
+python3 main.py result
+```
+
+指定输入输出：
+
+```bash
+python3 main.py result --input data/4-review --output data/5-result
+```
+
+消融实验：
+
+```bash
+python3 main.py result --ablation-no-writeback
+python3 main.py result --ablation-no-chunk-offset
+```
+
+5. `experiment`（统一实验入口，按 `chunking -> classification -> review` 运行并产出指标）
 
 ```bash
 python3 main.py experiment \
@@ -103,6 +122,18 @@ python3 main.py experiment \
   --chunk-size 1000
 ```
 
+覆盖 review 规则与消融参数示例：
+
+```bash
+python3 main.py experiment \
+  --run-name exp_with_review_opts \
+  --mode keyword_llm \
+  --review-rules prompt/rule_hits_expanded.csv \
+  --review-rule-version v1 \
+  --review-ground-truth 待审核 \
+  --review-schema-retry-limit 2
+```
+
 带标注集（用于 P/R/F1）：
 
 ```bash
@@ -112,7 +143,7 @@ python3 main.py experiment \
   --ground-truth baseline
 ```
 
-5. `exp_cuad`（CUAD 实验）
+6. `exp_cuad`（CUAD 实验）
 
 在 macOS 上推荐使用远端 OpenAI 兼容服务，不在本机加载大模型：
 
@@ -167,6 +198,7 @@ python3 -m src.exp_cuad.run_infer \
 - 产物落盘：`src/experiment/artifact_writer.py`
 - 输出根目录：`data/experiments/`
 - 模块完整文档：`src/experiment/README.md`
+- 执行链路：`chunking -> classification -> review`
 
 每次实验会生成：
 
@@ -180,6 +212,12 @@ data/experiments/
     classified/keyword_only/*.classified.json      # keyword_llm_experiment
     classified/llm_only/*.classified.json          # keyword_llm_experiment
     classified/keyword_llm/*.classified.json       # keyword_llm_experiment
+    review/*.review.json
+    review/review_trace.jsonl
+    review/review_metrics.json
+    review/keyword_only/*.review.json              # keyword_llm_experiment
+    review/llm_only/*.review.json                  # keyword_llm_experiment
+    review/keyword_llm/*.review.json               # keyword_llm_experiment
     audit_result/audit_result.json
     final_report/final_report.md
     final_report/final_report_*.md                 # keyword_llm_experiment
@@ -194,6 +232,7 @@ data/experiments/
 
 - 配置参数：`run_id/timestamp/mode/model/temperature/chunk_size/max_concurrency/cache_*`
 - 复合模式标识：`experiment_mode`（用于区分 `keyword_llm_experiment`）
+- review 产物计数：`review_file_count`
 - 质量指标：`precision/recall/f1`（有标注集时计算）
 - 运行指标：`avg_token_in/avg_token_out/avg_total_token/reasoning_token_ratio/cached_token_ratio/avg_latency_ms/schema_valid_rate/conflict_rate/cache_hit_rate/llm_error_rate/total_tokens_estimated_rate`
 
@@ -215,6 +254,25 @@ data/experiments/
   - `--ablation-no-rules`
   - `--ablation-coarse-rules`
 - 模块完整文档：`src/review/README.md`
+
+### result
+
+- 目录：`src/result/`
+- 输入：`data/4-review/*.review.json`
+- 不修改：`review_items.source_file` 指向的源文件
+- 输出：`data/5-result/annotated_docs/*.result.docx`（在副本上写入批注）
+- 依赖：`python-docx>=1.2.0` + LibreOffice（用于 `.doc` 转 `.docx`）
+- 常见错误：若提示“检测到 .doc 源文件，但未找到可用转换器”，请安装 LibreOffice 并确认 `which soffice` 可用
+- 注释触发条件：`review_items.result ∈ {不合格, 待复核}`
+- 批注内容：`risk_type/result/rule_hit/suggest`
+- 运行产物：
+  - `data/5-result/result_trace.jsonl`
+  - `data/5-result/result_metrics.json`
+  - `data/5-result/source_copies/*`（源文件为 `.doc` 时保留副本）
+- 消融开关：
+  - `--ablation-no-writeback`
+  - `--ablation-no-chunk-offset`
+- 模块完整文档：`src/result/README.md`
 
 ### exp_cuad
 

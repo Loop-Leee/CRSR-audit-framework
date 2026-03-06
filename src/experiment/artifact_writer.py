@@ -23,6 +23,7 @@ class ExperimentLayout:
     run_dir: Path
     chunks_dir: Path
     classified_dir: Path
+    review_dir: Path
     audit_result_dir: Path
     final_report_dir: Path
     metrics_dir: Path
@@ -45,6 +46,7 @@ class ArtifactWriter:
             run_dir=run_dir,
             chunks_dir=run_dir / "chunks",
             classified_dir=run_dir / "classified",
+            review_dir=run_dir / "review",
             audit_result_dir=run_dir / "audit_result",
             final_report_dir=run_dir / "final_report",
             metrics_dir=run_dir / "metrics",
@@ -54,6 +56,7 @@ class ArtifactWriter:
             layout.run_dir,
             layout.chunks_dir,
             layout.classified_dir,
+            layout.review_dir,
             layout.audit_result_dir,
             layout.final_report_dir,
             layout.metrics_dir,

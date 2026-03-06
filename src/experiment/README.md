@@ -14,7 +14,7 @@
 
 ### 阶段 A：环境与输入校验
 
-目标：确认 `Word -> chunks -> classified` 能跑通。
+目标：确认 `Word -> chunks -> classified -> review` 能跑通。
 
 ```bash
 python3 main.py experiment \
@@ -47,7 +47,7 @@ python3 main.py experiment \
 
 ### 阶段 C：主实验（关键词 + LLM）
 
-目标：采集质量指标 + 成本/时延/稳定性指标。
+目标：采集质量指标 + 成本/时延/稳定性指标，并产出 review 结果。
 
 ```bash
 python3 main.py experiment \
@@ -75,7 +75,7 @@ python3 main.py experiment --run-name grid_p10 --mode keyword_llm --chunk-size 1
 
 ### 阶段 E：单次三路消融（keyword+llm / keyword_only / llm_only）
 
-目标：一次 keyword + 一次 llm，产出三套分类结果与三行汇总。
+目标：一次 keyword + 一次 llm，产出三套分类结果、三套 review 结果与三行汇总。
 
 ```bash
 python3 main.py experiment \
@@ -129,6 +129,12 @@ python3 main.py experiment
 | `--max-concurrency` | 覆盖最大并发 | 配置文件值 |
 | `--disable-llm-concurrency` | 强制关闭并发 | 关闭 |
 | `--disable-cache` | 强制关闭缓存 | 关闭 |
+| `--review-rules` | review 规则文件路径（csv/json） | 使用 review 配置 |
+| `--review-rule-version` | review 规则版本 | 使用 review 配置 |
+| `--review-ground-truth` | review item 的 `ground_truth` 初值 | `待审核` |
+| `--review-ablation-no-rules` | review 消融：不注入规则列表 | 关闭 |
+| `--review-ablation-coarse-rules` | review 消融：粗粒度规则 | 关闭 |
+| `--review-schema-retry-limit` | review schema 重试上限（0-3） | 使用 review 配置 |
 
 ## 4. 目录与产物结构
 
@@ -141,6 +147,13 @@ data/experiments/
   <run_id>/
     chunks/
     classified/
+      keyword_only/          # 仅 keyword_llm_experiment 下存在
+      llm_only/              # 仅 keyword_llm_experiment 下存在
+      keyword_llm/           # 仅 keyword_llm_experiment 下存在
+    review/
+      *.review.json          # 单策略模式
+      review_trace.jsonl     # 单策略模式
+      review_metrics.json    # 单策略模式
       keyword_only/          # 仅 keyword_llm_experiment 下存在
       llm_only/              # 仅 keyword_llm_experiment 下存在
       keyword_llm/           # 仅 keyword_llm_experiment 下存在
@@ -175,6 +188,8 @@ log/
 | `实验输入文件数` | 待处理文档数 |
 | `分块完成` | chunking 输出完成 |
 | `chunk 分类完成` | 每个 chunk 分类完成，含 LLM 诊断字段 |
+| `review_file_done` | 单个 classified 文件的 review 完成 |
+| `review_mode_done` | 当前模式的 review 执行完成 |
 | `诊断明细写入完成` | `metrics/llm_trace.jsonl` 已写出 |
 | `指标写入完成` | `metrics/metrics*.json` 已写出 |
 | `results 追加完成` | `results.csv/jsonl` 已写入一行 |
@@ -219,6 +234,7 @@ log/
 | `ground_truth_path` | 标注集路径 |
 | `file_count` | 输入文档数 |
 | `classified_file_count` | 分类输出文件数 |
+| `review_file_count` | review 输出文件数 |
 | `precision` | 微平均 Precision |
 | `recall` | 微平均 Recall |
 | `f1` | 微平均 F1 |
@@ -278,7 +294,7 @@ log/
 - 职责：
 - 读取参数与配置
 - 固定 run_id（参数指纹）
-- 执行 chunking + classification
+- 执行 chunking + classification + review
 - 按 `--mode` 执行单策略或单次三路消融
 - 调用 metrics 聚合
 - 调用 artifact_writer 统一落盘

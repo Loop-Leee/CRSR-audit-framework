@@ -1,0 +1,9 @@
+{
+  "input_dir": "data/4-review",
+  "output_dir": "data/5-result",
+  "log_dir": "log/result",
+  "target_results": ["不合格", "待复核"],
+  "backup_enabled": true,
+  "ablation_no_writeback": false,
+  "ablation_no_chunk_offset": false
+}

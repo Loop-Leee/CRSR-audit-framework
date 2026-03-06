@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 from src.tools.logger import Logger
+from src.tools.word_io import extract_word_text as _extract_word_text
 
 
 SUPPORTED_EXTENSIONS = {".doc", ".docx"}
@@ -25,29 +25,7 @@ def extract_word_text(path: Path, logger: Logger | None = None) -> str:
         RuntimeError: `textutil` 不可用或提取失败时抛出。
     """
 
-    try:
-        if logger:
-            logger.info(f"提取文本: {path}")
-        out = subprocess.run(
-            ["textutil", "-convert", "txt", "-stdout", str(path)],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout
-    except FileNotFoundError as error:
-        if logger:
-            logger.error("textutil 不存在，无法提取 Word 文本。")
-        raise RuntimeError("未找到 textutil。") from error
-    except subprocess.CalledProcessError as error:
-        stderr = error.stderr.strip() if error.stderr else "unknown error"
-        if logger:
-            logger.error(f"textutil 提取失败: {path} -> {stderr}")
-        raise RuntimeError(f"解析失败: {path} -> {stderr}") from error
-
-    text = out.replace("\r\n", "\n").replace("\r", "\n").strip()
-    if logger:
-        logger.info(f"文本提取完成: {path}, chars={len(text)}")
-    return text
+    return _extract_word_text(path=path, logger=logger)
 
 
 def discover_word_files(input_dir: Path, logger: Logger | None = None) -> list[Path]:

@@ -16,6 +16,11 @@ if __name__ == "__main__":
         from src.review.review_cli import main as run_review
 
         run_review()
+    elif len(sys.argv) > 1 and sys.argv[1] == "result":
+        del sys.argv[1]
+        from src.result.result_cli import main as run_result
+
+        run_result()
     elif len(sys.argv) > 1 and sys.argv[1] == "experiment":
         del sys.argv[1]
         from src.experiment.run_experiment import main as run_experiment

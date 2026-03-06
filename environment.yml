@@ -6,3 +6,10 @@ dependencies:
   - python=3.11
   - pip
   - datasets>=2.20
+  - python-docx>=1.2.0
+
+# System dependency (install separately, not managed by conda env):
+# - LibreOffice CLI (soffice/libreoffice/lowriter), required by result module for .doc -> .docx conversion
+#   macOS:  brew install --cask libreoffice
+#   Linux:  sudo apt-get update && sudo apt-get install -y libreoffice
+#   Windows: winget install TheDocumentFoundation.LibreOffice

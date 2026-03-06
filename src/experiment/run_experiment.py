@@ -16,6 +16,8 @@ from src.chunking.word_text_extractor import discover_word_files
 from src.classification.classification_config import load_classification_config
 from src.classification.classification_pipeline import ClassificationStrategy, run_classification_with_diagnostics
 from src.llm import DEFAULT_LLM_CONFIG_PATH, LLMSettings, load_llm_settings
+from src.review.review_config import load_review_config
+from src.review.review_pipeline import MAX_SCHEMA_RETRY_LIMIT, run_review_with_diagnostics
 from src.tools.logger import Logger, get_logger
 
 from .artifact_writer import ArtifactWriter
@@ -40,6 +42,12 @@ class ExperimentConfig:
     max_concurrency: int
     cache_enabled: bool
     cache_path: str
+    review_rules_path: str
+    review_rule_version: str
+    review_ablation_no_rules: bool
+    review_ablation_coarse_rules: bool
+    review_schema_retry_limit: int
+    review_ground_truth: str
     ground_truth_path: str | None
 
     def to_dict(self) -> dict[str, Any]:
@@ -51,7 +59,7 @@ class ExperimentConfig:
 def parse_args() -> argparse.Namespace:
     """解析实验入口参数。"""
 
-    parser = argparse.ArgumentParser(description="统一实验入口：chunking + classification + metrics + artifacts")
+    parser = argparse.ArgumentParser(description="统一实验入口：chunking + classification + review + metrics + artifacts")
     parser.add_argument("--run-name", type=str, default="experiment", help="实验名称前缀")
     parser.add_argument("--input-dir", type=Path, default=None, help="原始 Word 输入目录")
     parser.add_argument("--risk-info", type=Path, default=None, help="风险类型 CSV 路径")
@@ -70,6 +78,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-concurrency", type=int, default=None, help="覆盖并发数")
     parser.add_argument("--disable-llm-concurrency", action="store_true", help="关闭 LLM 并发")
     parser.add_argument("--disable-cache", action="store_true", help="关闭 LLM 缓存")
+    parser.add_argument("--review-rules", type=Path, default=None, help="review 规则文件路径（csv/json）")
+    parser.add_argument("--review-rule-version", type=str, default=None, help="review 规则版本号")
+    parser.add_argument("--review-ground-truth", type=str, default="待审核", help="review item ground_truth 初值")
+    parser.add_argument("--review-ablation-no-rules", action="store_true", help="review 消融：不注入规则列表")
+    parser.add_argument("--review-ablation-coarse-rules", action="store_true", help="review 消融：粗粒度规则")
+    parser.add_argument("--review-schema-retry-limit", type=int, default=None, help="review schema 重试上限（0-3）")
     return parser.parse_args()
 
 
@@ -82,19 +96,39 @@ def main() -> None:
 
     chunking_config = load_chunking_config()
     classification_config = load_classification_config()
+    review_config = load_review_config()
 
     input_dir = _resolve_path(args.input_dir or chunking_config["input"])
     risk_info_path = _resolve_path(args.risk_info or classification_config["risk_info"])
+    review_rules_path = _resolve_path(args.review_rules or review_config["rules"])
+    review_rule_version = str(args.review_rule_version or review_config["rule_version"]).strip() or "v1"
+    review_ground_truth = (args.review_ground_truth or "待审核").strip() or "待审核"
+    review_schema_retry_limit = int(
+        args.review_schema_retry_limit
+        if args.review_schema_retry_limit is not None
+        else review_config["schema_retry_limit"]
+    )
     output_root = _resolve_path(args.output_root)
     ground_truth_path = _resolve_path(args.ground_truth) if args.ground_truth else None
     llm_config_path = _resolve_path(args.llm_config)
     chunk_size = clamp_chunk_size(args.chunk_size, chunking_config["min"], chunking_config["max"])
+    _validate_review_options(
+        ablation_no_rules=args.review_ablation_no_rules,
+        ablation_coarse_rules=args.review_ablation_coarse_rules,
+        schema_retry_limit=review_schema_retry_limit,
+    )
 
     llm_settings = _build_llm_settings(args, llm_config_path)
     run_config = _build_experiment_config(
         args=args,
         input_dir=input_dir,
         risk_info_path=risk_info_path,
+        review_rules_path=review_rules_path,
+        review_rule_version=review_rule_version,
+        review_ablation_no_rules=args.review_ablation_no_rules,
+        review_ablation_coarse_rules=args.review_ablation_coarse_rules,
+        review_schema_retry_limit=review_schema_retry_limit,
+        review_ground_truth=review_ground_truth,
         output_root=output_root,
         chunk_size=chunk_size,
         llm_settings=llm_settings,
@@ -141,7 +175,36 @@ def main() -> None:
         else {classification_strategy: classification_result.chunk_diagnostics}
     )
 
-    # 阶段 4：按统一口径聚合指标（质量+性能+稳定性）。
+    # 阶段 4：把 classified 结果作为输入，执行 review。
+    review_outputs_by_mode: dict[str, list[Path]] = {}
+    for mode in mode_to_outputs:
+        review_input_dir = layout.classified_dir / mode if emit_all_variants else layout.classified_dir
+        review_output_dir = layout.review_dir / mode if emit_all_variants else layout.review_dir
+        review_result = run_review_with_diagnostics(
+            input_path=review_input_dir,
+            output_dir=review_output_dir,
+            rules_path=review_rules_path,
+            rule_version=review_rule_version,
+            llm_settings=llm_settings,
+            logger=logger,
+            ablation_no_rules=args.review_ablation_no_rules,
+            ablation_coarse_rules=args.review_ablation_coarse_rules,
+            schema_retry_limit=review_schema_retry_limit,
+            ground_truth=review_ground_truth,
+        )
+        review_outputs_by_mode[mode] = review_result.outputs
+        logger.info(
+            "review_mode_done: mode=%s, reviewed_files=%s, task_count=%s, review_item_count=%s, output=%s"
+            % (
+                mode,
+                len(review_result.outputs),
+                review_result.metrics.task_count,
+                review_result.metrics.emitted_item_count,
+                review_output_dir,
+            )
+        )
+
+    # 阶段 5：按统一口径聚合分类指标（质量+性能+稳定性）。
     metrics_by_mode: dict[str, ExperimentMetrics] = {}
     for mode, classified_files in mode_to_outputs.items():
         metrics_by_mode[mode] = compute_experiment_metrics(
@@ -150,7 +213,7 @@ def main() -> None:
             ground_truth_path=ground_truth_path,
         )
 
-    # 阶段 5：统一落盘所有产物，并追加 results 汇总行。
+    # 阶段 6：统一落盘所有产物，并追加 results 汇总行。
     writer.write_diagnostics(classification_result.chunk_diagnostics, layout)
     writer.write_audit_result(classification_result.chunk_diagnostics, layout)
     csv_path: Path | None = None
@@ -162,6 +225,7 @@ def main() -> None:
             metrics,
             len(files),
             len(mode_to_outputs[mode]),
+            len(review_outputs_by_mode.get(mode, [])),
             result_mode=mode,
             result_run_id=f"{run_config.run_id}__{mode}" if emit_all_variants else run_config.run_id,
         )
@@ -179,14 +243,13 @@ def main() -> None:
     print(f"[OK] results_csv={csv_path}")
     print(f"[OK] results_jsonl={jsonl_path}")
     print(f"[OK] run_dir={layout.run_dir}")
+    print(f"[OK] review_dir={layout.review_dir}")
 
 
 def _build_llm_settings(args: argparse.Namespace, llm_config_path: Path) -> LLMSettings:
-    enabled_override = False if args.mode == "keyword_only" else None
     concurrency_override = False if args.disable_llm_concurrency else None
     settings = load_llm_settings(
         config_path=llm_config_path,
-        enabled_override=enabled_override,
         concurrent_enabled_override=concurrency_override,
     )
 
@@ -208,6 +271,12 @@ def _build_experiment_config(
     args: argparse.Namespace,
     input_dir: Path,
     risk_info_path: Path,
+    review_rules_path: Path,
+    review_rule_version: str,
+    review_ablation_no_rules: bool,
+    review_ablation_coarse_rules: bool,
+    review_schema_retry_limit: int,
+    review_ground_truth: str,
     output_root: Path,
     chunk_size: int,
     llm_settings: LLMSettings,
@@ -219,6 +288,12 @@ def _build_experiment_config(
         "run_name": args.run_name,
         "input_dir": str(input_dir),
         "risk_info_path": str(risk_info_path),
+        "review_rules_path": str(review_rules_path),
+        "review_rule_version": review_rule_version,
+        "review_ablation_no_rules": review_ablation_no_rules,
+        "review_ablation_coarse_rules": review_ablation_coarse_rules,
+        "review_schema_retry_limit": review_schema_retry_limit,
+        "review_ground_truth": review_ground_truth,
         "chunk_size": chunk_size,
         "mode": args.mode,
         "model": llm_settings.model,
@@ -239,6 +314,12 @@ def _build_experiment_config(
         timestamp=datetime.now().isoformat(timespec="seconds"),
         input_dir=str(input_dir),
         risk_info_path=str(risk_info_path),
+        review_rules_path=str(review_rules_path),
+        review_rule_version=review_rule_version,
+        review_ablation_no_rules=review_ablation_no_rules,
+        review_ablation_coarse_rules=review_ablation_coarse_rules,
+        review_schema_retry_limit=review_schema_retry_limit,
+        review_ground_truth=review_ground_truth,
         output_root=str(output_root),
         chunk_size=chunk_size,
         mode=args.mode,
@@ -257,6 +338,7 @@ def _build_summary_row(
     metrics: ExperimentMetrics,
     file_count: int,
     classified_count: int,
+    review_count: int,
     *,
     result_mode: str,
     result_run_id: str,
@@ -279,6 +361,7 @@ def _build_summary_row(
         "ground_truth_path": config.ground_truth_path,
         "file_count": file_count,
         "classified_file_count": classified_count,
+        "review_file_count": review_count,
     }
     row.update(metrics.to_dict())
     return row
@@ -310,6 +393,7 @@ def _result_fields() -> list[str]:
         "ground_truth_path",
         "file_count",
         "classified_file_count",
+        "review_file_count",
         "precision",
         "recall",
         "f1",
@@ -341,6 +425,20 @@ def _resolve_classification_plan(mode: str) -> tuple[ClassificationStrategy, boo
     if mode == "llm_only":
         return "llm_only", False
     return "keyword_llm", False
+
+
+def _validate_review_options(
+    *,
+    ablation_no_rules: bool,
+    ablation_coarse_rules: bool,
+    schema_retry_limit: int,
+) -> None:
+    if ablation_no_rules and ablation_coarse_rules:
+        raise ValueError("--review-ablation-no-rules 与 --review-ablation-coarse-rules 不能同时启用。")
+    if schema_retry_limit < 0 or schema_retry_limit > MAX_SCHEMA_RETRY_LIMIT:
+        raise ValueError(
+            f"review_schema_retry_limit 必须在 [0, {MAX_SCHEMA_RETRY_LIMIT}] 范围内。"
+        )
 
 
 def _safe_name(value: str) -> str:
