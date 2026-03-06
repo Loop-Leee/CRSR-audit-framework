@@ -88,6 +88,8 @@ python3 main.py result --ablation-no-chunk-offset
 
 说明：不使用全局模糊匹配，避免跨 chunk 误命中。
 
+写回时会再次在 DOCX 段落文本（包含表格内段落）中检索 `span`，并优先按锚点选择最近命中，再将批注挂载到对应 run 区间，减少“偏前/偏后”现象。
+
 ## 关键指标字段
 
 - `review_item_count`：扫描到的 review 条目总数。

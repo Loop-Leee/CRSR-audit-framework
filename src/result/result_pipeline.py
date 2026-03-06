@@ -517,7 +517,7 @@ def run_result_with_diagnostics(
                     comments=[
                         DocxComment(
                             risk_id=pending.risk_id,
-                            anchor_offset=pending.span_end,
+                            anchor_offset=pending.span_start,
                             span=pending.span,
                             content=pending.comment_text,
                         )
@@ -768,6 +768,7 @@ def _locate_span(
 
     chunk_key = str(chunk_id).strip() if chunk_id is not None else ""
     chunk = chunk_ranges.get(chunk_key)
+    parsed_offset: tuple[int, int] | None = None
     if chunk is not None and not ablation_no_chunk_offset:
         span_offset = raw_item.get("span_offset")
         parsed_offset = _parse_span_offset(span_offset)
@@ -786,6 +787,19 @@ def _locate_span(
                     start=near_match[0],
                     end=near_match[1],
                     strategy="span_offset_near_exact",
+                )
+            chunk_nearest_match = _find_exact_best_in_window(
+                text=source_text,
+                query=span,
+                start=chunk.start,
+                end=chunk.end,
+                anchor=anchor,
+            )
+            if chunk_nearest_match is not None:
+                return _SpanLocation(
+                    start=chunk_nearest_match[0],
+                    end=chunk_nearest_match[1],
+                    strategy="span_offset_chunk_nearest_exact",
                 )
 
     if chunk is not None:
@@ -851,6 +865,43 @@ def _find_exact_near_anchor(
         end = start + len(query)
         distance = abs(start - anchor)
         matches.append((distance, start, end))
+        offset = local_index + 1
+
+    if not matches:
+        return None
+    matches.sort(key=lambda item: (item[0], item[1]))
+    _, best_start, best_end = matches[0]
+    return (best_start, best_end)
+
+
+def _find_exact_best_in_window(
+    *,
+    text: str,
+    query: str,
+    start: int,
+    end: int,
+    anchor: int,
+) -> tuple[int, int] | None:
+    """在给定窗口内选择与 anchor 距离最近的精确命中。"""
+
+    if not query:
+        return None
+    if not _is_valid_range(start, end, len(text)):
+        return None
+    window = text[start:end]
+    if not window:
+        return None
+
+    matches: list[tuple[int, int, int]] = []
+    offset = 0
+    while True:
+        local_index = window.find(query, offset)
+        if local_index < 0:
+            break
+        found_start = start + local_index
+        found_end = found_start + len(query)
+        distance = abs(found_start - anchor)
+        matches.append((distance, found_start, found_end))
         offset = local_index + 1
 
     if not matches:
