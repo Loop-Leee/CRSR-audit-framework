@@ -65,7 +65,36 @@ python3 main.py review --ablation-no-rules
 python3 main.py review --ablation-coarse-rules
 ```
 
-4. `result`（依据 review 的 span 在 `5-result` 副本写入 Word 批注，不改源文件）
+4. `baseline`（直接对 `chunking` 结果执行全规则审查，不经过 classification/review 拆分）
+
+```bash
+python3 main.py baseline
+```
+
+指定输入输出：
+
+```bash
+python3 main.py baseline --input data/2-chunks --output data/4-review-baseline
+```
+
+消融实验：
+
+```bash
+python3 main.py baseline --ablation-no-rules
+python3 main.py baseline --ablation-no-span-offset
+```
+
+OpenAI-compatible 网关建议（关闭思考并限制输出）：
+
+```bash
+python3 main.py baseline \
+  --max-new-tokens 512 \
+  --openai-no-think-prompt \
+  --openai-disable-thinking \
+  --openai-send-max-new-tokens-param
+```
+
+5. `result`（依据 review 的 span 在 `5-result` 副本写入 Word 批注，不改源文件）
 
 ```bash
 python3 main.py result
@@ -84,7 +113,7 @@ python3 main.py result --ablation-no-writeback
 python3 main.py result --ablation-no-chunk-offset
 ```
 
-5. `experiment`（统一实验入口，按 `chunking -> classification -> review` 运行并产出指标）
+6. `experiment`（统一实验入口，按 `chunking -> classification -> review` 运行并产出指标）
 
 ```bash
 python3 main.py experiment \
@@ -255,6 +284,23 @@ data/experiments/
   - `--ablation-coarse-rules`
 - 模块完整文档：`src/review/README.md`
 
+### baseline
+
+- 目录：`src/baseline/`
+- 输入：`data/2-chunks/*.chunks.json`
+- 输出：`data/4-review-baseline/*.review.json`
+- 规则源：`prompt/risk_info.csv`（读取全部 `(审查类型, 审查规则)`，每个 chunk 一次性注入）
+- OpenAI 兼容请求默认支持“禁用思考 + 限制输出 token”参数（可由 CLI 覆盖）
+- 输出约束：`review_items` 与 `review` 模块同构，但不包含 `rule_hit/rule_hit_id`
+- `risk_id`：`doc_id#c{chunk_id}#rt{risk_type}#{idx}`（与 review 同构，移除 `rule_hit_id` 段）
+- 运行产物：
+  - `data/4-review-baseline/baseline_trace.jsonl`
+  - `data/4-review-baseline/baseline_metrics.json`
+- 消融开关：
+  - `--ablation-no-rules`
+  - `--ablation-no-span-offset`
+- 模块完整文档：`src/baseline/README.md`
+
 ### result
 
 - 目录：`src/result/`
@@ -377,7 +423,9 @@ LLM 响应元数据（用于实验指标）：
 
 - `chunking`: `log/chunking/*.log`
 - `classification`: `log/classification/*.log`
+- `baseline`: `log/baseline/*.log`
 - `review`: `log/review/*.log`
+- `result`: `log/result/*.log`
 - `experiment`: `log/experiment/*.log`
 - `llm`: `log/llm/*.log`
 

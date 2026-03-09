@@ -1,0 +1,11 @@
+{
+  "input_dir": "data/2-chunks",
+  "output_dir": "data/4-review-baseline",
+  "risk_info_path": "prompt/risk_info.csv",
+  "log_dir": "log/baseline",
+  "schema_retry_limit": 1,
+  "max_new_tokens": 512,
+  "openai_no_think_prompt": true,
+  "openai_disable_thinking": true,
+  "openai_send_max_new_tokens_param": true
+}

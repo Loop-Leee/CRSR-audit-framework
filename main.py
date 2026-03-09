@@ -11,6 +11,11 @@ if __name__ == "__main__":
         from src.classification.classification_cli import main as run_classification
 
         run_classification()
+    elif len(sys.argv) > 1 and sys.argv[1] == "baseline":
+        del sys.argv[1]
+        from src.baseline.baseline_cli import main as run_baseline
+
+        run_baseline()
     elif len(sys.argv) > 1 and sys.argv[1] == "review":
         del sys.argv[1]
         from src.review.review_cli import main as run_review

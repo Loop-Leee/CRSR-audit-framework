@@ -624,6 +624,13 @@ class OpenAICompatibleClient:
                 f"LLM TimeoutError: {exc}",
                 error_code="timeout",
             ) from exc
+        except OSError as exc:
+            detail = str(exc)
+            error_code = "timeout" if "timed out" in detail.lower() else "network_error"
+            raise LLMClientError(
+                f"LLM OSError: {detail}",
+                error_code=error_code,
+            ) from exc
 
         return body, request_id
 
