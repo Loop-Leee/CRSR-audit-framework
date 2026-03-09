@@ -221,12 +221,61 @@ def llm_generate_vllm_builder(model_name: str) -> Callable[[str, str, int], Gene
     return _generate
 
 
-def llm_generate_openai_builder(*, model_name: str, client: Any) -> Callable[[str, str, int], GenerationCall]:
+def _append_no_think_suffix(user_prompt: str, *, enable: bool) -> str:
+    """按需给用户提示词追加 `/no_think`。"""
+
+    if not enable:
+        return user_prompt
+    if "/no_think" in user_prompt:
+        return user_prompt
+    return f"{user_prompt.rstrip()}\n/no_think"
+
+
+def _build_openai_extra_payload(
+    *,
+    max_new_tokens: int,
+    send_max_new_tokens_param: bool,
+    disable_thinking: bool,
+) -> dict[str, Any]:
+    """构建 OpenAI-compatible 额外请求参数。"""
+
+    payload: dict[str, Any] = {}
+    if send_max_new_tokens_param:
+        token_limit = int(max_new_tokens)
+        # 兼容不同网关的 token 参数命名。
+        payload["max_new_tokens"] = token_limit
+        payload["max_completion_tokens"] = token_limit
+    if disable_thinking:
+        # 兼容两类常见 OpenAI-compatible 网关写法。
+        payload["enable_thinking"] = False
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
+    return payload
+
+
+def llm_generate_openai_builder(
+    *,
+    model_name: str,
+    client: Any,
+    force_no_think_prompt: bool,
+    disable_thinking: bool,
+    send_max_new_tokens_param: bool,
+) -> Callable[[str, str, int], GenerationCall]:
     """构建 OpenAI 兼容后端生成器。"""
 
     def _generate(system: str, user: str, max_new_tokens: int = 256) -> GenerationCall:
-        messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
-        resp = client.chat_with_metadata(messages, model=model_name, max_tokens=max_new_tokens)
+        user_content = _append_no_think_suffix(user, enable=force_no_think_prompt)
+        extra_payload = _build_openai_extra_payload(
+            max_new_tokens=max_new_tokens,
+            send_max_new_tokens_param=send_max_new_tokens_param,
+            disable_thinking=disable_thinking,
+        )
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": user_content}]
+        resp = client.chat_with_metadata(
+            messages,
+            model=model_name,
+            max_tokens=max_new_tokens,
+            extra_payload=extra_payload,
+        )
         return GenerationCall(
             text=resp.content,
             latency_ms=resp.latency_ms,
@@ -414,7 +463,8 @@ def infer_single_chunk_with_retry(
 
     if "_raw" in obj:
         json_retried = True
-        retry_tokens = max(max_new_tokens, 512)
+        # JSON 修复重试尽量短，避免再次被长 reasoning 吞掉配额。
+        retry_tokens = max(128, min(int(max_new_tokens), 512))
         retry_call = gen(system, user, retry_tokens)
         retry_ms = retry_call.latency_ms
         _usage_add_call(usage, retry_call)
@@ -582,6 +632,24 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--overlap_chars", type=int, default=800)
     parser.add_argument("--max_new_tokens", type=int, default=256)
     parser.add_argument("--llm_concurrency", type=int, default=OPENAI_CHUNK_CONCURRENCY)
+    parser.add_argument(
+        "--openai_no_think_prompt",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="仅 openai 后端生效：是否在 user prompt 末尾追加 /no_think",
+    )
+    parser.add_argument(
+        "--openai_disable_thinking",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="仅 openai 后端生效：请求里附带 enable_thinking=false",
+    )
+    parser.add_argument(
+        "--openai_send_max_new_tokens_param",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="仅 openai 后端生效：请求里同步附带 max_new_tokens（兼容部分网关）",
+    )
     parser.add_argument("--limit_docs", type=int, default=0)
     parser.add_argument(
         "--out_jsonl",
@@ -632,7 +700,9 @@ def main() -> None:
 
     logger.info(
         "推理参数: model=%s, split=%s, backend=%s, mode=%s, max_chars=%s, overlap_chars=%s, "
-        "max_new_tokens=%s, llm_concurrency=%s, limit_docs=%s, out_jsonl=%s, progress_jsonl=%s, "
+        "max_new_tokens=%s, llm_concurrency=%s, openai_no_think_prompt=%s, "
+        "openai_disable_thinking=%s, openai_send_max_new_tokens_param=%s, limit_docs=%s, "
+        "out_jsonl=%s, progress_jsonl=%s, "
         "summary_json=%s, resolved_out_jsonl=%s, resolved_progress_jsonl=%s, resolved_summary_json=%s, "
         "data_source=%s, local_cuad_dir=%s, output_switches=%s"
         % (
@@ -644,6 +714,9 @@ def main() -> None:
             args.overlap_chars,
             args.max_new_tokens,
             args.llm_concurrency,
+            args.openai_no_think_prompt,
+            args.openai_disable_thinking,
+            args.openai_send_max_new_tokens_param,
             args.limit_docs,
             args.out_jsonl,
             args.progress_jsonl or "(auto)",
@@ -676,11 +749,24 @@ def main() -> None:
                 logger.info("LLM_API_KEY 为空，使用 OpenAI-compatible 匿名 HTTP 模式")
 
             client = OpenAICompatibleClient(settings)
-            gen = llm_generate_openai_builder(model_name=args.model, client=client)
+            gen = llm_generate_openai_builder(
+                model_name=args.model,
+                client=client,
+                force_no_think_prompt=args.openai_no_think_prompt,
+                disable_thinking=args.openai_disable_thinking,
+                send_max_new_tokens_param=args.openai_send_max_new_tokens_param,
+            )
             llm_cache_stats_getter = client.cache_stats
             logger.info(
-                "后端初始化完成: backend=openai, base_url=%s, model=%s"
-                % (settings.base_url, args.model)
+                "后端初始化完成: backend=openai, base_url=%s, model=%s, "
+                "no_think_prompt=%s, disable_thinking=%s, send_max_new_tokens_param=%s"
+                % (
+                    settings.base_url,
+                    args.model,
+                    args.openai_no_think_prompt,
+                    args.openai_disable_thinking,
+                    args.openai_send_max_new_tokens_param,
+                )
             )
 
         chunk_parallel_enabled = args.backend == "openai"
@@ -753,6 +839,11 @@ def main() -> None:
                         "mode": args.mode,
                         "backend": args.backend,
                         "model": args.model,
+                        "openai_no_think_prompt": args.openai_no_think_prompt if args.backend == "openai" else None,
+                        "openai_disable_thinking": args.openai_disable_thinking if args.backend == "openai" else None,
+                        "openai_send_max_new_tokens_param": (
+                            args.openai_send_max_new_tokens_param if args.backend == "openai" else None
+                        ),
                         "data_source": data_source,
                         "docs": len(data),
                         "labels": len(all_labels),

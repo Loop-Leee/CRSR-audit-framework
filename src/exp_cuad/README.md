@@ -46,7 +46,10 @@ python3 -m src.exp_cuad.run_infer \
   --backend openai \
   --mode baseline \
   --split test \
-  --limit_docs 5 \
+  --limit_docs 0 \
+  --openai_no_think_prompt \
+  --openai_disable_thinking \
+  --openai_send_max_new_tokens_param \
   --out_jsonl data/cuad/outputs/cuad_baseline.jsonl
 ```
 
@@ -71,6 +74,9 @@ data/cuad/outputs/cuad_baseline_mode-baseline_backend-openai_split-test_model-qw
 | `--overlap_chars` | 分块重叠字符数 | `800` |
 | `--max_new_tokens` | 单次生成最大 token | `256` |
 | `--llm_concurrency` | chunk 并发（openai 后端） | `10` |
+| `--openai_no_think_prompt/--no-openai_no_think_prompt` | openai：是否在 user prompt 追加 `/no_think` | `true` |
+| `--openai_disable_thinking/--no-openai_disable_thinking` | openai：请求里附带 `enable_thinking=false` | `true` |
+| `--openai_send_max_new_tokens_param/--no-openai_send_max_new_tokens_param` | openai：额外发送 `max_new_tokens` 参数 | `true` |
 | `--limit_docs` | 文档数上限，`0` 表示全量 | `0` |
 | `--out_jsonl` | 输出基准文件名（自动追加参数+时间戳+指纹） | `data/cuad/outputs/cuad_baseline.jsonl` |
 
@@ -156,6 +162,10 @@ PY
 - `NonMatchingSplitsSizesError`：代码会自动尝试 `force_redownload`
 - `vllm` 在 macOS 不可用：切换 `--backend openai/transformers`
 - 模型输出非 JSON：系统会自动重试一次并记录失败日志
+- 若日志中频繁出现 `LLM 返回空内容` 且 `token_out` 接近固定上限（如 2048）：
+  常见原因是网关忽略了 `max_tokens` 或默认开启 thinking，建议保持
+  `--openai_no_think_prompt --openai_disable_thinking --openai_send_max_new_tokens_param`
+- 建议 `--max_new_tokens` 先用 `256`；过大的值（如 2048）在推理模型上更容易出现超时与“思考耗尽配额”。
 
 ## 8. 与当前样例输出的关系
 

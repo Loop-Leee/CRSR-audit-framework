@@ -6,6 +6,7 @@ Your task: determine whether the given contract text contains the specified clau
 If present, extract the most relevant evidence sentences verbatim from the contract.
 If not present, output NO_CLAUSE.
 Return JSON only, no extra text.
+Never output hidden reasoning / chain-of-thought.
 """
 
 def make_baseline_user_prompt(label: str, label_desc: str | None, chunk_text: str) -> str:
@@ -33,6 +34,7 @@ You must follow a structured audit procedure:
 2) If present, copy exact evidence sentences verbatim.
 3) Keep output strictly in JSON with fixed keys.
 Return JSON only.
+Never output hidden reasoning / chain-of-thought.
 """
 
 def make_crsr_lite_user_prompt(label: str, label_desc: str | None, chunk_text: str) -> str:

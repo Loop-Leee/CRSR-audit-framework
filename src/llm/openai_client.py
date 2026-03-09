@@ -414,6 +414,7 @@ class OpenAICompatibleClient:
         *,
         model: str | None = None,
         max_tokens: int | None = None,
+        extra_payload: dict[str, Any] | None = None,
     ) -> str:
         """调用模型并返回文本内容。
 
@@ -421,6 +422,7 @@ class OpenAICompatibleClient:
             messages: OpenAI Chat 消息列表。
             model: 可选模型名覆盖；为空时使用 `LLMSettings.model`。
             max_tokens: 可选最大生成 token 数。
+            extra_payload: 额外透传字段（用于兼容网关自定义参数）。
 
         Returns:
             str: 模型输出文本。
@@ -429,7 +431,12 @@ class OpenAICompatibleClient:
             LLMClientError: 当请求失败且超过重试次数时抛出。
         """
 
-        return self.chat_with_metadata(messages, model=model, max_tokens=max_tokens).content
+        return self.chat_with_metadata(
+            messages,
+            model=model,
+            max_tokens=max_tokens,
+            extra_payload=extra_payload,
+        ).content
 
     def chat_with_metadata(
         self,
@@ -437,6 +444,7 @@ class OpenAICompatibleClient:
         *,
         model: str | None = None,
         max_tokens: int | None = None,
+        extra_payload: dict[str, Any] | None = None,
     ) -> LLMChatResponse:
         """调用模型并返回文本与调用元数据。
 
@@ -444,6 +452,7 @@ class OpenAICompatibleClient:
             messages: OpenAI Chat 消息列表。
             model: 可选模型名覆盖；为空时使用 `LLMSettings.model`。
             max_tokens: 可选最大生成 token 数。
+            extra_payload: 额外透传字段（用于兼容网关自定义参数）。
 
         Returns:
             LLMChatResponse: 包含文本、token、时延、缓存命中等信息。
@@ -452,7 +461,12 @@ class OpenAICompatibleClient:
             LLMClientError: 当请求失败且超过重试次数时抛出。
         """
 
-        cache_key, key_meta = self._build_cache_key(messages, model=model, max_tokens=max_tokens)
+        cache_key, key_meta = self._build_cache_key(
+            messages,
+            model=model,
+            max_tokens=max_tokens,
+            extra_payload=extra_payload,
+        )
         cached = self._cache.get(cache_key)
         if cached is not None:
             if _is_invalid_content(cached.content):
@@ -466,10 +480,17 @@ class OpenAICompatibleClient:
             started = time.perf_counter()
             request_id = ""
             try:
-                body, request_id = self._send_request(messages, model=model, max_tokens=max_tokens)
+                body, request_id = self._send_request(
+                    messages,
+                    model=model,
+                    max_tokens=max_tokens,
+                    extra_payload=extra_payload,
+                )
                 parsed = self._parse_response_body(body)
                 content = self._extract_content(parsed, body)
                 usage = self._extract_tokens(parsed)
+                finish_reason = self._extract_finish_reason(parsed)
+                reasoning_chars = self._extract_reasoning_chars(parsed)
                 response = LLMChatResponse(
                     content=content,
                     token_in=usage.prompt_tokens,
@@ -486,8 +507,16 @@ class OpenAICompatibleClient:
                 )
                 if _is_invalid_content(response.content):
                     self._logger.error(
-                        "LLM 返回空内容，跳过缓存: request_id=%s, token_out=%s, total_tokens=%s"
-                        % (response.request_id, response.token_out, response.total_tokens)
+                        "LLM 返回空内容，跳过缓存: request_id=%s, token_out=%s, total_tokens=%s, "
+                        "finish_reason=%s, reasoning_chars=%s, extra_payload_keys=%s"
+                        % (
+                            response.request_id,
+                            response.token_out,
+                            response.total_tokens,
+                            finish_reason or "(none)",
+                            reasoning_chars,
+                            ",".join(sorted((extra_payload or {}).keys())) or "(none)",
+                        )
                     )
                     return response
                 self._cache.set(cache_key, response, key_meta)
@@ -534,11 +563,15 @@ class OpenAICompatibleClient:
         *,
         model: str | None = None,
         max_tokens: int | None = None,
+        extra_payload: dict[str, Any] | None = None,
     ) -> tuple[str, str]:
         """执行单次 HTTP 请求。
 
         Args:
             messages: OpenAI Chat 消息列表。
+            model: 可选模型名覆盖；为空时使用 `LLMSettings.model`。
+            max_tokens: 可选最大生成 token 数。
+            extra_payload: 额外透传字段（用于兼容网关自定义参数）。
 
         Returns:
             tuple[str, str]: `(body, request_id)`。
@@ -555,6 +588,8 @@ class OpenAICompatibleClient:
         }
         if max_tokens is not None:
             payload["max_tokens"] = int(max_tokens)
+        if extra_payload:
+            payload.update(extra_payload)
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request = Request(
             endpoint,
@@ -637,6 +672,10 @@ class OpenAICompatibleClient:
             content = message.get("content")
             if isinstance(content, str):
                 return content
+            if isinstance(content, dict):
+                text = content.get("text")
+                if isinstance(text, str):
+                    return text
             if isinstance(content, list):
                 parts: list[str] = []
                 for item in content:
@@ -651,6 +690,11 @@ class OpenAICompatibleClient:
             msg_text = message.get("text")
             if isinstance(msg_text, str):
                 return msg_text
+            # 某些推理模型在 content 为空时仅返回 reasoning 字段。
+            for reasoning_key in ("reasoning", "reasoning_content"):
+                reasoning_text = message.get(reasoning_key)
+                if isinstance(reasoning_text, str) and reasoning_text.strip():
+                    return reasoning_text
 
         # 兼容部分 OpenAI-compatible 实现返回 choices[i].text。
         choice_text = choice0.get("text")
@@ -658,6 +702,34 @@ class OpenAICompatibleClient:
             return choice_text
 
         return ""
+
+    @staticmethod
+    def _extract_finish_reason(parsed: dict[str, Any]) -> str:
+        """提取首个 choice 的 finish_reason，用于诊断。"""
+
+        try:
+            choice0 = parsed.get("choices", [])[0]
+            finish_reason = choice0.get("finish_reason")
+            return finish_reason if isinstance(finish_reason, str) else ""
+        except Exception:  # noqa: BLE001
+            return ""
+
+    @staticmethod
+    def _extract_reasoning_chars(parsed: dict[str, Any]) -> int:
+        """提取首个 choice 的 reasoning 字符数，用于诊断空 content 情况。"""
+
+        try:
+            choice0 = parsed.get("choices", [])[0]
+        except Exception:  # noqa: BLE001
+            return 0
+        message = choice0.get("message")
+        if not isinstance(message, dict):
+            return 0
+        for key in ("reasoning", "reasoning_content"):
+            value = message.get(key)
+            if isinstance(value, str):
+                return len(value)
+        return 0
 
     @staticmethod
     def _extract_tokens(parsed: dict[str, Any]) -> LLMTokenUsage:
@@ -715,11 +787,15 @@ class OpenAICompatibleClient:
         *,
         model: str | None = None,
         max_tokens: int | None = None,
+        extra_payload: dict[str, Any] | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """生成缓存键与结构化键元数据。
 
         Args:
             messages: OpenAI Chat 消息列表。
+            model: 可选模型名覆盖；为空时使用 `LLMSettings.model`。
+            max_tokens: 可选最大生成 token 数。
+            extra_payload: 参与缓存键计算的透传参数。
 
         Returns:
             tuple[str, dict[str, Any]]:
@@ -732,6 +808,7 @@ class OpenAICompatibleClient:
             "model": model or self._settings.model,
             "temperature": self._settings.temperature,
             "max_tokens": max_tokens,
+            "extra_payload": extra_payload or {},
             "messages": messages,
         }
         serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
@@ -742,6 +819,7 @@ class OpenAICompatibleClient:
                 "model": payload["model"],
                 "temperature": payload["temperature"],
                 "max_tokens": payload["max_tokens"],
+                "extra_payload": payload["extra_payload"],
                 "message_count": len(messages),
             },
         )

@@ -95,6 +95,15 @@ python3 main.py review --ablation-coarse-rules
 - `ground_truth`（默认 `"待审核"`，人工标注后可改为 `"合格"` 或 `"不合格"`）
 - `risk_id`（`doc_id#c{chunk_id}#rt{risk_type}#r{rule_hit_id}#{idx}`）
 
+`risk_id` 计算规则：
+
+- 组成字段：
+  - `doc_id`：文档标识。
+  - `chunk_id`：命中的 chunk 编号。
+  - `risk_type`：本条命中的审查类型。
+  - `rule_hit_id`：规则命中 ID（无法解析时为 `UNKNOWN`）。
+  - `idx`：同一计数键下的顺序号（从 `1` 开始）。
+
 说明：`doc_id` 与 `rule_version` 仅出现在 `review_meta`，不在 `review_items` 重复。
 
 ### review_trace.jsonl 字段说明
