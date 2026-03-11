@@ -80,7 +80,23 @@ data/cuad/outputs/cuad_baseline_mode-baseline_backend-openai_split-test_model-qw
 | `--limit_docs` | 文档数上限，`0` 表示全量 | `0` |
 | `--out_jsonl` | 输出基准文件名（自动追加参数+时间戳+指纹） | `data/cuad/outputs/cuad_baseline.jsonl` |
 
-### 3.2 输出消融开关
+### 3.2 核心参数解释（影响最终指标）
+
+| 参数 | 对指标的影响 | 建议 |
+|---|---|---|
+| `--model` | 决定推理能力上限，直接影响 P/R/F1 | 实验中保持固定；跨模型对比时只改这一项 |
+| `--backend` | 影响请求协议与返回格式稳定性，间接影响解析成功率和召回 | 同一组实验保持固定（推荐 `openai`） |
+| `--mode` | 决定 prompt 模板（`baseline/crsr_lite`），直接影响分类行为 | 实验报告必须记录并固定 |
+| `--max_chars` | 决定分块粒度，影响证据是否落在同一 chunk | 与 `--overlap_chars` 成对固定 |
+| `--overlap_chars` | 决定跨 chunk 上下文保留，影响召回/不一致率 | 与 `--max_chars` 成对固定 |
+| `--max_new_tokens` | 决定单次输出上限；过大可能导致长推理/空内容，过小会截断 JSON | 推荐从 `256` 起步并固定 |
+| `--openai_no_think_prompt` | 控制是否追加 `/no_think`，影响是否出现“只输出 reasoning” | `openai` 后端建议保持开启 |
+| `--openai_disable_thinking` | 控制是否请求 `enable_thinking=false`，影响空 content 概率 | `openai` 后端建议保持开启 |
+| `--openai_send_max_new_tokens_param` | 控制是否额外发送 `max_new_tokens`，影响网关兼容性 | `openai` 后端建议保持开启 |
+| `--split`/`--data_source` | 决定数据来源与样本分布，直接影响最终指标可比性 | 报告中必须记录 |
+| `--limit_docs` | 控制样本规模；非全量结果不能与全量指标直接比较 | 最终报告建议 `0`（全量） |
+
+### 3.3 输出消融开关
 
 | 开关 | 作用 | 默认 |
 |---|---|---|
@@ -114,37 +130,29 @@ data/cuad/outputs/cuad_baseline_mode-baseline_backend-openai_split-test_model-qw
 
 ## 5. 如何用 `cuad_baseline.jsonl` 做指标分析
 
-### 5.1 最小复算（precision / recall / f1）
+### 5.1 全套指标脚本（统一口径，推荐）
 
 ```bash
-python3 - <<'PY'
-import json
-import subprocess
-from pathlib import Path
-
-latest = subprocess.check_output(
-    "ls -t data/cuad/outputs/cuad_baseline_*.jsonl | head -1",
-    shell=True,
-    text=True,
-).strip()
-rows=[json.loads(x) for x in Path(latest).read_text(encoding='utf-8').splitlines() if x.strip()]
-
-tp=sum(1 for r in rows if r['present_pred'] and r['present_gt'])
-fp=sum(1 for r in rows if r['present_pred'] and not r['present_gt'])
-fn=sum(1 for r in rows if (not r['present_pred']) and r['present_gt'])
-
-precision=tp/(tp+fp) if (tp+fp) else 0.0
-recall=tp/(tp+fn) if (tp+fn) else 0.0
-f1=(2*precision*recall/(precision+recall)) if (precision+recall) else 0.0
-print({'precision':precision,'recall':recall,'f1':f1,'tp':tp,'fp':fp,'fn':fn,'pairs':len(rows)})
-PY
+python3 -m src.exp_cuad.analyze_metrics \
+  --input_jsonl outputs/cuad/cuad_baseline_mode-baseline_model-qwen2-72b-instruct_20260302_102233.jsonl \
+  --out_json outputs/cuad/cuad_baseline_mode-baseline_model-qwen2-72b-instruct_20260302_102233.metrics.json
 ```
 
-### 5.2 合理性检查建议
+输出为结构化 JSON，核心字段包括：
 
-- 检查 `pairs` 是否等于 `docs * labels`（中断运行会不一致）
-- 检查 `llm_usage.call_count` 与 `chunk_votes` 长度关系（JSON 重试会导致调用数偏大）
-- 检查 `presence_confusion` 聚合是否与 summary 一致
+- `metrics.presence_micro`：micro precision/recall/f1 + tp/fp/fn/tn
+- `metrics.presence_macro`：macro_f1
+- `metrics.evidence_jaccard_gt_present`
+- `metrics.laziness_rate`
+- `metrics.inconsistency_rate`
+- `per_label_metrics`（可通过消融开关关闭）
+- `llm_usage_aggregate`（可通过消融开关关闭）
+
+### 5.2 结果可用性检查
+
+- `dataset_stats.is_dense_matrix=true` 时，结果可视为完整 `(doc,label)` 矩阵；否则说明运行中断或样本缺失
+- `row_stats.line_invalid=0` 时，输入文件解析完整；否则需先定位坏行
+- 指标报告应与实验参数一起归档（至少记录 `model/backend/mode/max_chars/overlap_chars/max_new_tokens`）
 
 ## 6. 指标口径（统一来源）
 
@@ -169,4 +177,4 @@ PY
 
 ## 8. 与当前样例输出的关系
 
-现有 `data/cuad/outputs/` 下的 JSONL 可直接用于复算 `precision/recall/f1`。如果你需要分析 LLM 调用参数和 token/时延，请使用自动追加后缀的新产物文件。
+建议把 `cuad_baseline*.jsonl` 作为原始实验记录，把 `analyze_metrics.py` 产出的 `*.metrics.json` 作为最终分析口径文件归档（用于汇报与横向对比）。

@@ -391,3 +391,67 @@ python3 -m src.experiment.review_eval \
 说明：
 - `--ablation-pred-only-universe` 与 `--ablation-standard-only-universe` 互斥。
 - `--ablation-standard-only-universe` 表示仅以标准集 key 作为统计宇宙。
+
+## 10. review_eval 指标计算口径
+
+### 10.1 评测单元与标签映射
+
+- 评测 key：`(doc_id, chunk_id, risk_type)`
+- `gold_label`：
+  - `ground_truth ∈ {"不合格", "待复核"}` -> `1`
+  - 其他取值（含空值）-> `0`
+- `pred_label`：
+  - `result ∈ {"不合格", "待复核"}` -> `1`
+  - 其他取值（含空值）-> `0`
+- 重复 key 合并优先级：`不合格 > 待复核 > 合格`
+
+### 10.2 评测基础
+
+设：
+- `P(doc)`: 预测集该文档出现的 key 集合
+- `G(doc)`: 标准集该文档出现的 key 集合
+- `G+(doc)`: 标准集中正类 key（`gold_label=1`）
+
+基础定义：
+- 默认模式：`U(doc) = P(doc) ∪ G+(doc)`
+- `--ablation-pred-only-universe`：`U(doc) = P(doc)`
+- `--ablation-standard-only-universe`：`U(doc) = G(doc)`
+
+全局评测集合：`U = ⋃ U(doc)`。
+
+### 10.3 混淆矩阵判定
+
+对 `U` 中每个 key：
+- `TP`: `gold_label == 1 and pred_label == 1`
+- `FP`: `gold_label == 0 and pred_label == 1`
+- `FN`: `gold_label == 1 and pred_label == 0`
+- `TN`: `gold_label == 0 and pred_label == 0`
+
+### 10.4 Micro 指标
+
+先全局累计 `TP/FP/FN/TN`，再计算：
+
+```text
+precision = TP / (TP + FP)
+recall = TP / (TP + FN)
+f1 = 2 * precision * recall / (precision + recall)
+accuracy = (TP + TN) / (TP + FP + FN + TN)
+```
+
+说明：任一分母为 0 时，该指标记为 `0`。
+
+### 10.5 per_risk_type 与 Macro 指标
+
+- `per_risk_type`：
+  - 按 `risk_type` 分组后，分别计算该组的 `TP/FP/FN/TN` 与 `precision/recall/f1/accuracy`（公式同 Micro）。
+- `macro_by_risk_type`：
+  - 对所有 `risk_type` 的对应指标做**非加权算术平均**：
+
+```text
+macro_precision = mean(precision_r for r in R)
+macro_recall = mean(recall_r for r in R)
+macro_f1 = mean(f1_r for r in R)
+macro_accuracy = mean(accuracy_r for r in R)
+```
+
+其中 `R` 为本次评测结果中 `per_risk_type` 的风险类型集合。
