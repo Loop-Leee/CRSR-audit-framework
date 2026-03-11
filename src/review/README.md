@@ -150,6 +150,8 @@ python3 main.py review --ablation-coarse-rules
 | `rule_id_known_rate` | `float` | 输出项里 `rule_hit_id != "UNKNOWN"` 比例。 |
 | `avg_token_in` | `float` | LLM 任务平均输入 token。 |
 | `avg_token_out` | `float` | LLM 任务平均输出 token。 |
+| `avg_chunk_token_in` | `float` | 按 chunk 汇总后（同 chunk 的多 risk_type 任务 token 求和）再取平均的输入 token。 |
+| `avg_chunk_token_out` | `float` | 按 chunk 汇总后（同 chunk 的多 risk_type 任务 token 求和）再取平均的输出 token。 |
 | `avg_total_token` | `float` | LLM 任务平均总 token。 |
 | `avg_latency_ms` | `float` | LLM 任务平均耗时（毫秒）。 |
 | `schema_retry_count` | `int` | 本次运行累计 schema 补救重试次数。 |

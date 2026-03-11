@@ -407,6 +407,8 @@ class OpenAICompatibleClient:
             cache_path=settings.cache_path,
             logger=self._logger,
         )
+        if not settings.reasoning_enabled:
+            self._logger.info("LLM 反思已关闭：reasoning_enable=false")
 
     def chat(
         self,
@@ -588,8 +590,9 @@ class OpenAICompatibleClient:
         }
         if max_tokens is not None:
             payload["max_tokens"] = int(max_tokens)
-        if extra_payload:
-            payload.update(extra_payload)
+        effective_extra_payload = self._build_effective_extra_payload(extra_payload)
+        if effective_extra_payload:
+            payload.update(effective_extra_payload)
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request = Request(
             endpoint,
@@ -633,6 +636,39 @@ class OpenAICompatibleClient:
             ) from exc
 
         return body, request_id
+
+    def _build_effective_extra_payload(self, extra_payload: dict[str, Any] | None) -> dict[str, Any]:
+        """构建最终透传参数，并按配置补充 reasoning 开关。
+
+        规则：
+        - 默认保留调用方 `extra_payload`；
+        - 当 `reasoning_enable=false` 时，如果调用方未显式提供相关字段，
+          则自动补充 `enable_thinking=false` 与 `chat_template_kwargs.enable_thinking=false`；
+        - 调用方显式字段优先，不被该默认逻辑覆盖。
+
+        Args:
+            extra_payload: 调用方传入的透传参数。
+
+        Returns:
+            dict[str, Any]: 最终用于请求与缓存键计算的透传参数。
+        """
+
+        effective_payload: dict[str, Any] = dict(extra_payload or {})
+        if self._settings.reasoning_enabled:
+            return effective_payload
+
+        if "enable_thinking" not in effective_payload:
+            effective_payload["enable_thinking"] = False
+
+        chat_template_kwargs = effective_payload.get("chat_template_kwargs")
+        if isinstance(chat_template_kwargs, dict):
+            merged_kwargs = dict(chat_template_kwargs)
+            merged_kwargs.setdefault("enable_thinking", False)
+            effective_payload["chat_template_kwargs"] = merged_kwargs
+        elif "chat_template_kwargs" not in effective_payload:
+            effective_payload["chat_template_kwargs"] = {"enable_thinking": False}
+
+        return effective_payload
 
     @staticmethod
     def _parse_response_body(body: str) -> dict[str, Any]:
@@ -807,15 +843,18 @@ class OpenAICompatibleClient:
         Returns:
             tuple[str, dict[str, Any]]:
             - 第一个值是缓存键（SHA-256）；
-            - 第二个值是缓存键元数据（base_url/model/temperature/message_count）。
+            - 第二个值是缓存键元数据（base_url/model/temperature/max_tokens/
+              extra_payload/reasoning_enabled/message_count）。
         """
 
+        effective_extra_payload = self._build_effective_extra_payload(extra_payload)
         payload = {
             "base_url": self._settings.base_url.rstrip("/"),
             "model": model or self._settings.model,
             "temperature": self._settings.temperature,
             "max_tokens": max_tokens,
-            "extra_payload": extra_payload or {},
+            "reasoning_enabled": self._settings.reasoning_enabled,
+            "extra_payload": effective_extra_payload,
             "messages": messages,
         }
         serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
@@ -827,6 +866,7 @@ class OpenAICompatibleClient:
                 "temperature": payload["temperature"],
                 "max_tokens": payload["max_tokens"],
                 "extra_payload": payload["extra_payload"],
+                "reasoning_enabled": payload["reasoning_enabled"],
                 "message_count": len(messages),
             },
         )

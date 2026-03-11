@@ -41,6 +41,17 @@ stats = client.cache_stats()
 
 业务模块可通过命令参数传入关闭并发（例如 classification 的 `--disable-llm-concurrency`）。
 
+## 反思开关（消融）
+
+`src/llm/llm_config.json` 支持：
+
+- `reasoning_enable=true`：不强制下发 thinking 控制参数（保持模型默认行为）。
+- `reasoning_enable=false`：公共客户端自动补充
+  `enable_thinking=false` 与 `chat_template_kwargs.enable_thinking=false`
+  （调用方显式传入同名字段时，以调用方为准）。
+
+该开关会参与缓存 key 计算，避免开启/关闭反思时命中同一缓存。
+
 ## 缓存机制
 
 ### 1) 缓存开关（消融）
@@ -55,6 +66,9 @@ stats = client.cache_stats()
 - `base_url`（去掉尾部 `/`）
 - `model`
 - `temperature`
+- `max_tokens`
+- `reasoning_enabled`
+- `extra_payload`
 - `messages`（完整消息数组）
 
 随后对该 JSON 字符串计算 `SHA-256`，得到 `cache_key`。
@@ -81,6 +95,9 @@ stats = client.cache_stats()
     "base_url": "https://api.openai.com/v1",
     "model": "gpt-4o-mini",
     "temperature": 0,
+    "max_tokens": 256,
+    "extra_payload": {},
+    "reasoning_enabled": true,
     "message_count": 2
   },
   "response": {

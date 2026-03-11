@@ -9,6 +9,7 @@
   "temperature": 0,
   "timeout_seconds": 60,
   "max_retries": 2,
-  "cache_enabled": true,
+  "reasoning_enable": false,
+  "cache_enabled": false,
   "cache_path": "data/experiments/cache/llm_cache.jsonl"
 }

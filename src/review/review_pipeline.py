@@ -71,6 +71,8 @@ class ReviewRunMetrics:
     rule_id_known_rate: float
     avg_token_in: float
     avg_token_out: float
+    avg_chunk_token_in: float
+    avg_chunk_token_out: float
     avg_total_token: float
     avg_latency_ms: float
     schema_retry_count: int
@@ -493,6 +495,14 @@ def _compute_review_metrics(
 
     avg_token_in = _safe_mean([item.token_in for item in llm_rows])
     avg_token_out = _safe_mean([item.token_out for item in llm_rows])
+    chunk_token_in: dict[tuple[str, str, str], int] = {}
+    chunk_token_out: dict[tuple[str, str, str], int] = {}
+    for item in llm_rows:
+        chunk_key = (item.source_file, item.doc_id, str(item.chunk_id))
+        chunk_token_in[chunk_key] = chunk_token_in.get(chunk_key, 0) + int(item.token_in)
+        chunk_token_out[chunk_key] = chunk_token_out.get(chunk_key, 0) + int(item.token_out)
+    avg_chunk_token_in = _safe_mean(list(chunk_token_in.values()))
+    avg_chunk_token_out = _safe_mean(list(chunk_token_out.values()))
     avg_total_token = _safe_mean([item.total_tokens for item in llm_rows])
     avg_latency_ms = _safe_mean([item.latency_ms for item in llm_rows])
     schema_retry_count = sum(item.schema_retries for item in llm_rows)
@@ -509,6 +519,8 @@ def _compute_review_metrics(
         rule_id_known_rate=rule_id_known_rate,
         avg_token_in=avg_token_in,
         avg_token_out=avg_token_out,
+        avg_chunk_token_in=avg_chunk_token_in,
+        avg_chunk_token_out=avg_chunk_token_out,
         avg_total_token=avg_total_token,
         avg_latency_ms=avg_latency_ms,
         schema_retry_count=schema_retry_count,

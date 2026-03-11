@@ -60,6 +60,7 @@ class LLMSettings:
         temperature: 采样温度。
         timeout_seconds: 单次请求超时时间（秒）。
         max_retries: 失败重试次数（总尝试数为 `max_retries + 1`）。
+        reasoning_enabled: 是否开启模型反思/思考（消融开关）。
         cache_enabled: 是否启用持久化缓存（消融开关）。
         cache_path: 缓存文件路径（JSONL）。
     """
@@ -73,6 +74,7 @@ class LLMSettings:
     temperature: float
     timeout_seconds: int
     max_retries: int
+    reasoning_enabled: bool
     cache_enabled: bool
     cache_path: Path
 
@@ -163,6 +165,7 @@ def load_llm_settings(
     concurrent_enabled = bool(raw.get("concurrent_enabled", True))
     if concurrent_enabled_override is not None:
         concurrent_enabled = concurrent_enabled_override
+    reasoning_enabled = bool(raw.get("reasoning_enable", True))
 
     return LLMSettings(
         enabled=enabled,
@@ -176,6 +179,7 @@ def load_llm_settings(
         temperature=float(raw.get("temperature", 0)),
         timeout_seconds=timeout_seconds,
         max_retries=max_retries,
+        reasoning_enabled=reasoning_enabled,
         cache_enabled=cache_enabled,
         cache_path=cache_path,
     )

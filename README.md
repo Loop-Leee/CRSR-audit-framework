@@ -172,6 +172,24 @@ python3 main.py experiment \
   --ground-truth baseline
 ```
 
+Review 标准集对齐评测（`(doc_id, chunk_id, risk_type)`）：
+
+```bash
+python3 -m src.experiment.review_eval \
+  --gold-dir dataset/standard-review \
+  --pred-dir data/4-review \
+  --output-dir data/experiments/review_eval
+```
+
+仅按标准集统计宇宙（消融）：
+
+```bash
+python3 -m src.experiment.review_eval \
+  --gold-dir dataset/standard-review \
+  --pred-dir data/4-review-baseline \
+  --ablation-standard-only-universe
+```
+
 6. `exp_cuad`（CUAD 实验）
 
 在 macOS 上推荐使用远端 OpenAI 兼容服务，不在本机加载大模型：
@@ -225,6 +243,7 @@ python3 -m src.exp_cuad.run_infer \
 - 统一入口：`src/experiment/run_experiment.py`
 - 指标口径：`src/experiment/metrics.py`
 - 产物落盘：`src/experiment/artifact_writer.py`
+- review 标准集评测：`src/experiment/review_eval.py`
 - 输出根目录：`data/experiments/`
 - 模块完整文档：`src/experiment/README.md`
 - 执行链路：`chunking -> classification -> review`
@@ -276,6 +295,7 @@ data/experiments/
 - 标注字段：`review_items.ground_truth` 默认写入 `待审核`（可用 `--ground_truth` 覆盖）
 - 稳定性：schema 不合规输出支持限次重试（`--schema-retry-limit`，默认 `1`，上限 `3`）
 - 评估脚本：`python3 -m src.review.review_eval --input data/4-review`（输出 TP/FP/TN/FN）
+- 标准集对齐评测：`python3 -m src.experiment.review_eval --gold-dir dataset/standard-review --pred-dir data/4-review`
 - 运行产物：
   - `data/4-review/review_trace.jsonl`
   - `data/4-review/review_metrics.json`
@@ -377,6 +397,7 @@ PY
 `llm_config.json` 中可配置：
 
 - `max_retries`: HTTP/网络失败重试次数
+- `reasoning_enable`: 是否开启反思能力（`false` 时自动附带 `enable_thinking=false`，可用于反思消融）
 - `cache_enabled`: 是否开启持久化缓存（`false` 可作为缓存消融开关）
 - `cache_path`: 缓存文件路径（JSONL）
 
@@ -392,6 +413,9 @@ PY
    - `base_url`（去尾部 `/`）
    - `model`
    - `temperature`
+   - `max_tokens`
+   - `reasoning_enabled`
+   - `extra_payload`
    - `messages`（完整请求消息）
 
 2. **缓存命中方式**  
@@ -403,7 +427,7 @@ PY
 3. **缓存记录方式**  
    每次缓存写入都会向 `cache_path` 追加一条结构化 JSONL 记录，包含：
    - `event/cache_version/created_at/cache_key`
-   - `key_meta`（`base_url/model/temperature/message_count`）
+   - `key_meta`（`base_url/model/temperature/max_tokens/extra_payload/reasoning_enabled/message_count`）
    - `response`（`content/token_in/token_out/total_tokens/cached_tokens/reasoning_tokens/latency_ms/request_id/retries`）
 
 可通过 `OpenAICompatibleClient.cache_stats()` 获取结构化统计指标（命中、未命中、写入成功、写入失败、加载异常、绕过次数等）。

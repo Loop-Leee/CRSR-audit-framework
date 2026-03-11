@@ -104,6 +104,17 @@ python3 main.py experiment \
 
 > `--ground-truth` 支持目录（`*.json`）、单个 `json`、`jsonl`。
 
+### 阶段 G：review 标准集对齐评测
+
+目标：按 `(doc_id, chunk_id, risk_type)` 对齐标准集与预测集，输出 TP/FP/FN/TN、micro/macro 与 risk_type 分项指标。
+
+```bash
+python3 -m src.experiment.review_eval \
+  --gold-dir dataset/standard-review \
+  --pred-dir data/4-review \
+  --output-dir data/experiments/review_eval
+```
+
 ## 3. 启动命令总览
 
 ### 3.1 最小可运行命令
@@ -317,8 +328,18 @@ log/
   - 写出 `llm_trace.jsonl`
   - 写出 `metrics.json`
   - 写出 `audit_result.json`
-  - 写出 `final_report.md`
-  - 追加 `results.csv/jsonl`
+- 写出 `final_report.md`
+- 追加 `results.csv/jsonl`
+
+### `review_eval.py`
+
+- 入口函数：`main()`
+- 职责：
+  - 读取 `dataset/standard-review` 与 `data/4-review`（可由 CLI 覆盖）
+  - 按 key `(doc_id, chunk_id, risk_type)` 去重并合并（`不合格 > 待复核 > 合格`）
+  - 计算 `micro` 与 `per_risk_type` 指标，并汇总 `macro_by_risk_type`
+  - 产出结构化明细（`jsonl/csv`）与 warning 统计（`json`）
+  - 支持评测宇宙消融：`--ablation-pred-only-universe`、`--ablation-standard-only-universe`
 
 ## 8. 复现实验建议
 
@@ -327,3 +348,46 @@ log/
 - 固定标注：`ground_truth_path`
 - 重点检查 `total_tokens_estimated_rate`，若非 0 说明部分模型响应未返回 `usage.total_tokens`。
 - 将 `metrics/experiment_config.json` 与 `results.csv` 一起归档，作为复现实验元数据。
+
+## 9. review_eval 输出说明
+
+默认配置文件：`src/experiment/review_eval_config.json`
+
+默认输出目录：`data/experiments/review_eval/`
+
+- `review_eval_summary.json`：总览指标
+  - `micro`: 全局 TP/FP/FN/TN + Precision/Recall/F1/Accuracy
+  - `macro_by_risk_type`: 各 risk_type 指标算术平均
+  - `per_risk_type`: 每个 risk_type 的 TP/FP/FN/TN + 四项指标
+- `review_eval_warnings.json`：warning 聚合
+  - `counts`: 各类 warning 计数
+  - `samples`: 每类 warning 的样例（按上限截断）
+- `review_eval_details.jsonl` / `review_eval_details.csv`：逐 key 明细
+  - 字段：`doc_id/chunk_id/risk_type/gold_label/pred_label/judge`
+
+CLI 覆盖示例：
+
+```bash
+python3 -m src.experiment.review_eval \
+  --config src/experiment/review_eval_config.json \
+  --gold-dir dataset/standard-review \
+  --pred-dir data/4-review \
+  --output-dir data/experiments/review_eval_custom \
+  --max-warning-samples 50
+```
+
+消融示例（仅用于对比，不是默认评测口径）：
+
+```bash
+python3 -m src.experiment.review_eval \
+  --ablation-pred-only-universe
+```
+
+```bash
+python3 -m src.experiment.review_eval \
+  --ablation-standard-only-universe
+```
+
+说明：
+- `--ablation-pred-only-universe` 与 `--ablation-standard-only-universe` 互斥。
+- `--ablation-standard-only-universe` 表示仅以标准集 key 作为统计宇宙。
