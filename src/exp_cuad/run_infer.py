@@ -29,7 +29,12 @@ from .prompts import (
     make_baseline_user_prompt,
     make_crsr_lite_user_prompt,
 )
-from .text_utils import chunk_by_tokens_approx, normalize_ws, sentence_set_jaccard
+from .text_utils import (
+    chunk_by_semantic_jaccard_2gram,
+    chunk_by_tokens_approx,
+    normalize_ws,
+    sentence_set_jaccard,
+)
 
 OPENAI_CHUNK_CONCURRENCY = 10
 _JSON_CODEBLOCK_RE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
@@ -571,6 +576,33 @@ def _build_pair_record(
     return record
 
 
+def _chunk_document(
+    *,
+    text: str,
+    chunk_strategy: str,
+    max_chars: int,
+    overlap_chars: int,
+    logger: Logger,
+    doc_id: str,
+) -> list[str]:
+    """按指定策略分块文档，语义分块失败时回退到窗口分块。"""
+
+    if chunk_strategy == "window":
+        return chunk_by_tokens_approx(text, max_chars=max_chars, overlap_chars=overlap_chars)
+
+    try:
+        chunks = chunk_by_semantic_jaccard_2gram(text, max_chars=max_chars)
+        if chunks:
+            return chunks
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "语义分块失败，回退窗口分块: doc_id=%s, strategy=%s, error=%s"
+            % (doc_id, chunk_strategy, exc)
+        )
+
+    return chunk_by_tokens_approx(text, max_chars=max_chars, overlap_chars=overlap_chars)
+
+
 def _slugify(value: str, *, max_len: int = 32) -> str:
     """把任意字符串转换为文件名安全片段。"""
 
@@ -587,8 +619,9 @@ def _build_output_name_suffix(args: argparse.Namespace) -> str:
 
     model_tag = _slugify(args.model, max_len=24)
     mode_tag = _slugify(args.mode, max_len=16)
+    chunk_tag = _slugify(args.chunk_strategy, max_len=20)
     return (
-        f"mode-{mode_tag}_model-{model_tag}"
+        f"mode-{mode_tag}_chunk-{chunk_tag}_model-{model_tag}"
     )
 
 
@@ -628,6 +661,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--split", type=str, default="train")
     parser.add_argument("--backend", type=str, choices=["vllm", "transformers", "openai"], default="vllm")
     parser.add_argument("--mode", type=str, choices=["baseline", "crsr_lite"], default="baseline")
+    parser.add_argument(
+        "--chunk_strategy",
+        type=str,
+        choices=["semantic_jaccard_2gram", "window"],
+        default="semantic_jaccard_2gram",
+        help="分块策略：默认 semantic_jaccard_2gram（语义分块），window 为硬窗口分块（消融）",
+    )
     parser.add_argument("--max_chars", type=int, default=6000)
     parser.add_argument("--overlap_chars", type=int, default=800)
     parser.add_argument("--max_new_tokens", type=int, default=256)
@@ -699,7 +739,7 @@ def main() -> None:
     resolved_out_path, resolved_progress_path, resolved_summary_path = _resolve_output_paths(args)
 
     logger.info(
-        "推理参数: model=%s, split=%s, backend=%s, mode=%s, max_chars=%s, overlap_chars=%s, "
+        "推理参数: model=%s, split=%s, backend=%s, mode=%s, chunk_strategy=%s, max_chars=%s, overlap_chars=%s, "
         "max_new_tokens=%s, llm_concurrency=%s, openai_no_think_prompt=%s, "
         "openai_disable_thinking=%s, openai_send_max_new_tokens_param=%s, limit_docs=%s, "
         "out_jsonl=%s, progress_jsonl=%s, "
@@ -710,6 +750,7 @@ def main() -> None:
             args.split,
             args.backend,
             args.mode,
+            args.chunk_strategy,
             args.max_chars,
             args.overlap_chars,
             args.max_new_tokens,
@@ -838,6 +879,7 @@ def main() -> None:
                         "event": "run_start",
                         "mode": args.mode,
                         "backend": args.backend,
+                        "chunk_strategy": args.chunk_strategy,
                         "model": args.model,
                         "openai_no_think_prompt": args.openai_no_think_prompt if args.backend == "openai" else None,
                         "openai_disable_thinking": args.openai_disable_thinking if args.backend == "openai" else None,
@@ -855,10 +897,13 @@ def main() -> None:
             progress_handle.flush()
 
             for doc_index, ex in enumerate(data, start=1):
-                chunks = chunk_by_tokens_approx(
-                    ex.text,
+                chunks = _chunk_document(
+                    text=ex.text,
+                    chunk_strategy=args.chunk_strategy,
                     max_chars=args.max_chars,
                     overlap_chars=args.overlap_chars,
+                    logger=logger,
+                    doc_id=ex.doc_id,
                 )
                 logger.info(
                     "文档开始: doc_index=%s/%s, doc_id=%s, text_chars=%s, chunk_count=%s"
@@ -1085,6 +1130,7 @@ def main() -> None:
         summary = {
             "mode": args.mode,
             "backend": args.backend,
+            "chunk_strategy": args.chunk_strategy,
             "model": args.model,
             "data_source": data_source,
             "local_cuad_dir": str(local_dir),
