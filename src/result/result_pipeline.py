@@ -1,4 +1,4 @@
-"""result 模块：将 review 结果以批注形式写入 5-result Word 副本。"""
+"""result 模块：将 review 结果以批注形式写入 6-result Word 副本。"""
 
 from __future__ import annotations
 

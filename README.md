@@ -65,7 +65,25 @@ python3 main.py review --ablation-no-rules
 python3 main.py review --ablation-coarse-rules
 ```
 
-4. `baseline`（直接对 `chunking` 结果执行全规则审查，不经过 classification/review 拆分）
+4. `reflection`（对 `review_items` 做后验校正）
+
+```bash
+python3 main.py reflection
+```
+
+指定输入输出：
+
+```bash
+python3 main.py reflection --input data/4-review --output data/5-reflection
+```
+
+调节两阶段筛选参数：
+
+```bash
+python3 main.py reflection --stage1-threshold 4 --stage2-max-items 6
+```
+
+5. `baseline`（直接对 `chunking` 结果执行全规则审查，不经过 classification/review 拆分）
 
 ```bash
 python3 main.py baseline
@@ -94,7 +112,7 @@ python3 main.py baseline \
   --openai-send-max-new-tokens-param
 ```
 
-5. `result`（依据 review 的 span 在 `5-result` 副本写入 Word 批注，不改源文件）
+6. `result`（依据 review 的 span 在 `6-result` 副本写入 Word 批注，不改源文件）
 
 ```bash
 python3 main.py result
@@ -103,7 +121,7 @@ python3 main.py result
 指定输入输出：
 
 ```bash
-python3 main.py result --input data/4-review --output data/5-result
+python3 main.py result --input data/4-review --output data/6-result
 ```
 
 消融实验：
@@ -113,7 +131,7 @@ python3 main.py result --ablation-no-writeback
 python3 main.py result --ablation-no-chunk-offset
 ```
 
-6. `experiment`（统一实验入口，按 `chunking -> classification -> review` 运行并产出指标）
+7. `experiment`（统一实验入口，按 `chunking -> classification -> review` 运行并产出指标）
 
 ```bash
 python3 main.py experiment \
@@ -190,7 +208,7 @@ python3 -m src.experiment.review_eval \
   --ablation-standard-only-universe
 ```
 
-6. `exp_cuad`（CUAD 实验）
+8. `exp_cuad`（CUAD 实验）
 
 在 macOS 上推荐使用远端 OpenAI 兼容服务，不在本机加载大模型：
 
@@ -304,6 +322,26 @@ data/experiments/
   - `--ablation-coarse-rules`
 - 模块完整文档：`src/review/README.md`
 
+### reflection
+
+- 目录：`src/reflection/`
+- 输入：`data/4-review/*.review.json`
+- 输出：`data/5-reflection/*.reflection.json`
+- 两阶段策略：
+  - Stage-1：item-level 误报风险筛选 + 局部证据校正（默认 `fp_risk_score >= 4` 才调用 LLM）
+  - Stage-2：按 `(doc_id, risk_type)` 分组，仅对冲突组做一致性校正（每组默认最多 6 条）
+- 输出扩展字段：
+  - `review_items_original`（原始审查结果备份）
+  - `reflection_meta`（计数、调整量、token 统计）
+  - `reflection_items`（反思后的最终结果）
+- 运行产物：
+  - `data/5-reflection/reflection_trace.jsonl`
+  - `data/5-reflection/reflection_metrics.json`
+- 关键参数：
+  - `--stage1-threshold`
+  - `--stage2-max-items`
+- 模块完整文档：`src/reflection/README.md`
+
 ### baseline
 
 - 目录：`src/baseline/`
@@ -326,15 +364,15 @@ data/experiments/
 - 目录：`src/result/`
 - 输入：`data/4-review/*.review.json`
 - 不修改：`review_items.source_file` 指向的源文件
-- 输出：`data/5-result/annotated_docs/*.result.docx`（在副本上写入批注）
+- 输出：`data/6-result/annotated_docs/*.result.docx`（在副本上写入批注）
 - 依赖：`python-docx>=1.2.0` + LibreOffice（用于 `.doc` 转 `.docx`）
 - 常见错误：若提示“检测到 .doc 源文件，但未找到可用转换器”，请安装 LibreOffice 并确认 `which soffice` 可用
 - 注释触发条件：`review_items.result ∈ {不合格, 待复核}`
 - 批注内容：`risk_type/result/rule_hit/suggest`
 - 运行产物：
-  - `data/5-result/result_trace.jsonl`
-  - `data/5-result/result_metrics.json`
-  - `data/5-result/source_copies/*`（源文件为 `.doc` 时保留副本）
+  - `data/6-result/result_trace.jsonl`
+  - `data/6-result/result_metrics.json`
+  - `data/6-result/source_copies/*`（源文件为 `.doc` 时保留副本）
 - 消融开关：
   - `--ablation-no-writeback`
   - `--ablation-no-chunk-offset`
@@ -449,6 +487,7 @@ LLM 响应元数据（用于实验指标）：
 - `classification`: `log/classification/*.log`
 - `baseline`: `log/baseline/*.log`
 - `review`: `log/review/*.log`
+- `reflection`: `log/reflection/*.log`
 - `result`: `log/result/*.log`
 - `experiment`: `log/experiment/*.log`
 - `llm`: `log/llm/*.log`

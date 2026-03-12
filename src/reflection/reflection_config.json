@@ -1,0 +1,10 @@
+{
+  "input_dir": "data/4-review",
+  "output_dir": "data/5-reflection",
+  "log_dir": "log/reflection",
+  "reflection_version": "v1",
+  "stage1_threshold": 4,
+  "stage2_max_items": 6,
+  "evidence_max_chars": 360,
+  "chunk_excerpt_max_chars": 520
+}

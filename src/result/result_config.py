@@ -52,7 +52,7 @@ def load_result_config(config_path: Path | None = None) -> dict[str, object]:
 
     return {
         "input": _resolve_path(raw.get("input_dir"), "data/4-review"),
-        "output": _resolve_path(raw.get("output_dir"), "data/5-result"),
+        "output": _resolve_path(raw.get("output_dir"), "data/6-result"),
         "log_dir": _resolve_path(raw.get("log_dir"), "log/result"),
         "target_results": target_results,
         "backup_enabled": _as_bool(raw.get("backup_enabled"), True),

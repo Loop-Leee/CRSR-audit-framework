@@ -14,7 +14,7 @@ from .result_pipeline import run_result_with_diagnostics
 def parse_args() -> argparse.Namespace:
     """解析命令行参数。"""
 
-    parser = argparse.ArgumentParser(description="将 review 风险结果按 span 注释写入 5-result 中的 Word 副本")
+    parser = argparse.ArgumentParser(description="将 review 风险结果按 span 注释写入 6-result 中的 Word 副本")
     parser.add_argument("--config", type=Path, default=None, help="result 配置文件路径")
     parser.add_argument("--input", type=Path, default=None, help="review 输入文件或目录")
     parser.add_argument("--output", type=Path, default=None, help="result 输出目录")

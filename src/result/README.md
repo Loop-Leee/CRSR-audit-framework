@@ -28,7 +28,7 @@ python3 main.py result
 指定输入输出：
 
 ```bash
-python3 main.py result --input data/4-review --output data/5-result
+python3 main.py result --input data/4-review --output data/6-result
 ```
 
 指定目标结果标签：
