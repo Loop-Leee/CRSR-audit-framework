@@ -37,6 +37,25 @@ conda activate crsr-audit
 python3 main.py --chunk-size 1000
 ```
 
+`chunking` 分块策略消融实验（语义分块 vs 长度硬切分）：
+
+```bash
+python3 main.py chunking-ablation --chunk-size 1000
+```
+
+说明：默认不执行 `reflection` 模块；如需启用请显式传 `--enable-reflection`。
+`review_eval` 默认口径为：`semantic -> dataset/standard-review`，`hard_length -> dataset/chunk-review`。
+
+可选消融开关：
+
+```bash
+python3 main.py chunking-ablation --ablation-mode semantic_only
+python3 main.py chunking-ablation --ablation-mode hard_length_only
+python3 main.py chunking-ablation --enable-reflection
+python3 main.py chunking-ablation --review-eval-gold-dir dataset/standard-review
+python3 main.py chunking-ablation --review-eval-hard-gold-dir dataset/chunk-review
+```
+
 2. `classification`（chunk 风险类型分类）
 
 ```bash
@@ -246,6 +265,12 @@ python3 -m src.exp_cuad.run_infer \
 - 输入：`data/1-original/*.doc|*.docx`
 - 输出：`data/2-chunks/*.chunks.json`
 - 说明文档：`src/chunking/README.md`
+- 分块消融实验输出：`data/experiments/chunking-ablation/<run_id>/`
+  - `arms/semantic/`：语义分块全链路产物
+  - `arms/hard_length/`：长度硬切分全链路产物
+  - `metrics/chunking_ablation_summary.json`：结构化对比汇总
+  - `report/chunking_ablation_report.md`：可读实验报告
+  - `report/chunking_ablation_report.csv`：可统计对比数据
 
 ### classification
 

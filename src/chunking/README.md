@@ -12,6 +12,27 @@ python3 main.py --chunk-size 1500
 
 如果不传 `--chunk-size`，程序会在命令行提示输入分块大小。
 
+分块消融实验：
+
+```bash
+python3 main.py chunking-ablation --chunk-size 1000
+```
+
+默认不执行 `reflection` 模块；如需启用请显式增加：
+
+```bash
+python3 main.py chunking-ablation --chunk-size 1000 --enable-reflection
+```
+
+消融模式：
+
+```bash
+python3 main.py chunking-ablation --ablation-mode both
+python3 main.py chunking-ablation --ablation-mode semantic_only
+python3 main.py chunking-ablation --ablation-mode hard_length_only
+python3 main.py chunking-ablation --review-eval-gold-dir dataset/standard-review --review-eval-hard-gold-dir dataset/chunk-review
+```
+
 ## 配置文件
 默认配置文件：`src/chunking/chunker_config.json`
 
@@ -31,6 +52,30 @@ python3 main.py --chunk-size 1500
 
 用户输入的 `chunk-size` 会被强制限制在 `[min_chunk_size, max_chunk_size]` 区间内。
 
+消融配置文件：`src/chunking/chunking_ablation_config.json`
+
+```json
+{
+  "run_name": "chunking_ablation",
+  "output_root": "data/experiments/chunking-ablation",
+  "ablation_mode": "both",
+  "classification_mode": "keyword_llm",
+  "enable_reflection": false,
+  "review_eval_gold_dir": "dataset/standard-review",
+  "review_eval_gold_dir_hard_length": "dataset/chunk-review"
+}
+```
+
+- `ablation_mode`：`both/semantic_only/hard_length_only`，用于控制实验臂开关。
+- `classification_mode`：控制两组实验共享的分类策略。
+- `enable_reflection`：是否执行 reflection（默认 `false`）。
+- `review_eval_gold_dir`：`semantic` 实验臂的 review_eval 标准集路径。
+- `review_eval_gold_dir_hard_length`：`hard_length` 实验臂的 review_eval 标准集路径。
+
+默认评测口径为：
+- `semantic -> dataset/standard-review`
+- `hard_length -> dataset/chunk-review`
+
 ### 分块逻辑
 
 1. 硬边界切分：
@@ -45,6 +90,10 @@ python3 main.py --chunk-size 1500
 3. 过细分块合并：
 - 若某个 chunk 同时满足“与前一个 chunk 合并不超上限”且“与后一个 chunk 合并不超上限”，则触发合并。
 - 优先尝试三者（前/当前/后）一次合并；若超限则合并到更紧凑的一侧，减少碎片化 chunk。
+
+4. 长度硬切分（消融）：
+- 不使用标题和语义边界，仅按 `chunk-size` 字符窗口顺序切分。
+- 输出结构与语义分块保持一致，便于后续 classification/review/reflection/review_eval 直接复用。
 
 ### 输出格式
 
@@ -65,6 +114,7 @@ python3 main.py --chunk-size 1500
 - `chunk_merge_strategy.py`: 过细 chunk 合并策略。
 - `word_chunking_pipeline.py`: 串联完整分块流程并写出 JSON。
 - `chunking_cli.py`: 命令行入口。
+- `chunking_ablation_cli.py`: 分块策略消融实验入口（全链路评测与报告）。
 - `src/tools/logger.py`: 通用日志模块，统一输出到 `log/chunking/*.log`。
 
 ## 日志
@@ -72,3 +122,32 @@ python3 main.py --chunk-size 1500
 - 日志目录：`log/chunking/`
 - 关键步骤：`[info]`
 - 错误路径：`[error]`
+
+消融实验日志目录：`log/chunking_ablation/`
+
+## 消融实验产物
+
+```text
+data/experiments/chunking-ablation/<run_id>/
+  arms/                                        # 两个实验臂的全链路原始产物
+    semantic/                                  # 基线实验臂：语义分块
+      chunks/                                  # 分块结果（*.chunks.json）
+      classified/                              # 分类结果（*.classified.json）
+      review/                                  # 规则审查结果（*.review.json）
+      reflection/                              # 反思结果（仅 enable_reflection=true 时有内容）
+      review_eval/                             # 评测输出（review 与 reflection 两套）
+    hard_length/                               # 消融实验臂：按 chunk-size 硬切分
+      chunks/                                  # 分块结果（*.chunks.json）
+      classified/                              # 分类结果（*.classified.json）
+      review/                                  # 规则审查结果（*.review.json）
+      reflection/                              # 反思结果（仅 enable_reflection=true 时有内容）
+      review_eval/                             # 评测输出（review 与 reflection 两套）
+  metrics/
+    ablation_run_config.json                   # 本次运行的完整参数快照（可复现）
+    arm_metrics_semantic.json                  # semantic 实验臂的结构化指标
+    arm_metrics_hard_length.json               # hard_length 实验臂的结构化指标
+    chunking_ablation_summary.json             # 两个实验臂聚合结果 + delta 对比
+  report/
+    chunking_ablation_report.md                # 人读报告（结论、指标表、差值摘要）
+    chunking_ablation_report.csv               # 表格化对比数据（便于统计/画图）
+```

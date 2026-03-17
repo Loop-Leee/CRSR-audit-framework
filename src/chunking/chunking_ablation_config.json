@@ -1,0 +1,15 @@
+{
+  "run_name": "chunking_ablation",
+  "output_root": "data/experiments/chunking-ablation",
+  "ablation_mode": "both",
+  "classification_mode": "keyword_llm",
+  "enable_reflection": false,
+  "review_eval_gold_dir": "dataset/standard-review",
+  "review_eval_gold_dir_hard_length": "dataset/chunk-review",
+  "review_eval_gold_items_field": "auto",
+  "review_eval_ablation_pred_only_universe": false,
+  "review_eval_ablation_standard_only_universe": false,
+  "review_eval_enable_detail_jsonl": true,
+  "review_eval_enable_detail_csv": true,
+  "review_eval_max_warning_samples": 30
+}

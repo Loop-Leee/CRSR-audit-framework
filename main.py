@@ -36,6 +36,11 @@ if __name__ == "__main__":
         from src.experiment.run_experiment import main as run_experiment
 
         run_experiment()
+    elif len(sys.argv) > 1 and sys.argv[1] == "chunking-ablation":
+        del sys.argv[1]
+        from src.chunking.chunking_ablation_cli import main as run_chunking_ablation
+
+        run_chunking_ablation()
     else:
         from src.chunking.chunking_cli import main as run_chunking
 
