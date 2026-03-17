@@ -75,3 +75,15 @@ python3 main.py reflection --stage1-threshold 4 --stage2-max-items 6
 - `reflection_stage1_reason`
 - `reflection_stage2_action`
 - `reflection_stage2_reason`
+
+## 评测（review_eval）
+
+reflection 结果可直接复用 `experiment` 的 `review_eval` 口径评测：
+
+```bash
+python3 -m src.experiment.review_eval \
+  --gold-dir dataset/standard-review \
+  --pred-dir data/5-reflection
+```
+
+默认 `pred_items_field=auto`，会优先读取 `reflection_items`，若不存在则回退 `review_items`。

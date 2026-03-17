@@ -1,6 +1,6 @@
 {
   "gold_dir": "dataset/standard-review",
-  "pred_dir": "data/4-review",
+  "pred_dir": "data/5-reflection",
   "output_dir": "data/experiments/review_eval",
   "summary_filename": "review_eval_summary.json",
   "warning_filename": "review_eval_warnings.json",
@@ -10,5 +10,7 @@
   "enable_detail_csv": true,
   "ablation_pred_only_universe": false,
   "ablation_standard_only_universe": false,
-  "max_warning_samples": 30
+  "max_warning_samples": 30,
+  "gold_items_field": "auto",
+  "pred_items_field": "auto"
 }

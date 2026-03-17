@@ -14,7 +14,7 @@
 
 ### 阶段 A：环境与输入校验
 
-目标：确认 `Word -> chunks -> classified -> review` 能跑通。
+目标：确认 `Word -> chunks -> classified -> review -> reflection` 能跑通。
 
 ```bash
 python3 main.py experiment \
@@ -47,7 +47,7 @@ python3 main.py experiment \
 
 ### 阶段 C：主实验（关键词 + LLM）
 
-目标：采集质量指标 + 成本/时延/稳定性指标，并产出 review 结果。
+目标：采集质量指标 + 成本/时延/稳定性指标，并产出 review + reflection 结果。
 
 ```bash
 python3 main.py experiment \
@@ -111,7 +111,7 @@ python3 main.py experiment \
 ```bash
 python3 -m src.experiment.review_eval \
   --gold-dir dataset/standard-review \
-  --pred-dir data/4-review \
+  --pred-dir data/5-reflection \
   --output-dir data/experiments/review_eval
 ```
 
@@ -146,6 +146,14 @@ python3 main.py experiment
 | `--review-ablation-no-rules` | review 消融：不注入规则列表 | 关闭 |
 | `--review-ablation-coarse-rules` | review 消融：粗粒度规则 | 关闭 |
 | `--review-schema-retry-limit` | review schema 重试上限（0-3） | 使用 review 配置 |
+| `--reflection-version` | reflection 版本号 | 使用 reflection 配置 |
+| `--reflection-stage1-threshold` | reflection Stage-1 触发阈值 | 使用 reflection 配置 |
+| `--reflection-stage2-max-items` | reflection Stage-2 每组最大样本 | 使用 reflection 配置 |
+| `--reflection-evidence-max-chars` | reflection 证据窗口最大字符 | 使用 reflection 配置 |
+| `--reflection-chunk-excerpt-max-chars` | reflection 回退窗口最大字符 | 使用 reflection 配置 |
+| `--review-eval-gold-dir` | review_eval 标准集目录 | 使用 review_eval 配置 |
+| `--review-eval-ablation-pred-only-universe` | review_eval 消融：仅预测集宇宙 | 关闭 |
+| `--review-eval-ablation-standard-only-universe` | review_eval 消融：仅标准集宇宙 | 关闭 |
 
 ## 4. 目录与产物结构
 
@@ -168,11 +176,25 @@ data/experiments/
       keyword_only/          # 仅 keyword_llm_experiment 下存在
       llm_only/              # 仅 keyword_llm_experiment 下存在
       keyword_llm/           # 仅 keyword_llm_experiment 下存在
+    reflection/
+      *.reflection.json      # 单策略模式
+      reflection_trace.jsonl # 单策略模式
+      reflection_metrics.json# 单策略模式
+      keyword_only/          # 仅 keyword_llm_experiment 下存在
+      llm_only/              # 仅 keyword_llm_experiment 下存在
+      keyword_llm/           # 仅 keyword_llm_experiment 下存在
+    melting-reflection/
+      review_eval_*.json     # review 输出的 review_eval 结果（summary/warnings/config）
+      review_eval_*.jsonl    # review 输出的 review_eval 明细
+      review_eval_*.csv      # review 输出的 review_eval 明细
     audit_result/
       audit_result.json
     final_report/
       final_report.md        # 单策略模式
       final_report_*.md      # keyword_llm_experiment
+      reflection_review_eval_*.json
+      reflection_review_eval_*.jsonl
+      reflection_review_eval_*.csv
     metrics/
       experiment_config.json
       llm_trace.jsonl
@@ -201,6 +223,10 @@ log/
 | `chunk 分类完成` | 每个 chunk 分类完成，含 LLM 诊断字段 |
 | `review_file_done` | 单个 classified 文件的 review 完成 |
 | `review_mode_done` | 当前模式的 review 执行完成 |
+| `reflection_file_done` | 单个 review 文件的 reflection 完成 |
+| `reflection_mode_done` | 当前模式的 reflection 执行完成 |
+| `review_eval_for_review_done` | review 输出在 `melting-reflection` 的评测完成 |
+| `review_eval_for_reflection_done` | reflection 输出在 `final_report` 的评测完成 |
 | `诊断明细写入完成` | `metrics/llm_trace.jsonl` 已写出 |
 | `指标写入完成` | `metrics/metrics*.json` 已写出 |
 | `results 追加完成` | `results.csv/jsonl` 已写入一行 |
@@ -246,6 +272,7 @@ log/
 | `file_count` | 输入文档数 |
 | `classified_file_count` | 分类输出文件数 |
 | `review_file_count` | review 输出文件数 |
+| `reflection_file_count` | reflection 输出文件数 |
 | `precision` | 微平均 Precision |
 | `recall` | 微平均 Recall |
 | `f1` | 微平均 F1 |
@@ -305,7 +332,9 @@ log/
 - 职责：
 - 读取参数与配置
 - 固定 run_id（参数指纹）
-- 执行 chunking + classification + review
+- 执行 chunking + classification + review + reflection
+- 对 review 输出执行 review_eval（写入 `melting-reflection/`）
+- 对 reflection 输出执行 review_eval（写入 `final_report/`）
 - 按 `--mode` 执行单策略或单次三路消融
 - 调用 metrics 聚合
 - 调用 artifact_writer 统一落盘
@@ -325,6 +354,7 @@ log/
 - 入口类：`ArtifactWriter`
 - 职责：
   - 规划 run 目录结构
+  - 统一创建 `review/`、`reflection/`、`melting-reflection/`、`final_report/` 等目录
   - 写出 `llm_trace.jsonl`
   - 写出 `metrics.json`
   - 写出 `audit_result.json`
@@ -353,7 +383,13 @@ log/
 
 默认配置文件：`src/experiment/review_eval_config.json`
 
+在 `run_experiment` 中会自动执行两次评测：
+
+- `review -> review_eval`：输出到 `<run_id>/melting-reflection/`
+- `reflection -> review_eval`：输出到 `<run_id>/final_report/`（文件名前缀 `reflection_`）
+
 默认输出目录：`data/experiments/review_eval/`
+默认预测目录：`data/5-reflection/`（可通过 `--pred-dir` 覆盖）
 
 - `review_eval_summary.json`：总览指标
   - `micro`: 全局 TP/FP/FN/TN + Precision/Recall/F1/Accuracy
@@ -371,9 +407,17 @@ CLI 覆盖示例：
 python3 -m src.experiment.review_eval \
   --config src/experiment/review_eval_config.json \
   --gold-dir dataset/standard-review \
-  --pred-dir data/4-review \
+  --pred-dir data/5-reflection \
   --output-dir data/experiments/review_eval_custom \
   --max-warning-samples 50
+```
+
+预测项字段可选（默认 `auto`，优先 `reflection_items`，否则回退 `review_items`）：
+
+```bash
+python3 -m src.experiment.review_eval \
+  --pred-dir data/5-reflection \
+  --pred-items-field auto
 ```
 
 消融示例（仅用于对比，不是默认评测口径）：
@@ -403,6 +447,9 @@ python3 -m src.experiment.review_eval \
 - `pred_label`：
   - `result ∈ {"不合格", "待复核"}` -> `1`
   - 其他取值（含空值）-> `0`
+- 预测 item 数组字段：
+  - `pred_items_field=auto`（默认）：优先 `reflection_items`，否则回退 `review_items`
+  - 也可显式指定 `review_items` 或 `reflection_items`
 - 重复 key 合并优先级：`不合格 > 待复核 > 合格`
 
 ### 10.2 评测基础

@@ -16,6 +16,8 @@ from src.tools.logger import Logger, get_logger
 EvalKey = tuple[str, str, str]
 POSITIVE_LABELS = {"不合格", "待复核"}
 RISK_PRIORITY = {"不合格": 3, "待复核": 2, "合格": 1}
+ITEM_FIELD_CHOICES = {"auto", "review_items", "reflection_items"}
+AUTO_ITEM_FIELDS = ("reflection_items", "review_items")
 DEFAULT_CONFIG_PATH = Path("src/experiment/review_eval_config.json")
 
 
@@ -36,6 +38,8 @@ class ReviewEvalConfig:
         ablation_pred_only_universe: 消融开关，仅使用预测键构建评测宇宙。
         ablation_standard_only_universe: 消融开关，仅使用标准集键构建评测宇宙。
         max_warning_samples: 每类 warning 最多记录样例数量。
+        gold_items_field: 标准集 item 列表字段（`auto/review_items/reflection_items`）。
+        pred_items_field: 预测集 item 列表字段（`auto/review_items/reflection_items`）。
     """
 
     gold_dir: Path
@@ -50,6 +54,8 @@ class ReviewEvalConfig:
     ablation_pred_only_universe: bool
     ablation_standard_only_universe: bool
     max_warning_samples: int
+    gold_items_field: str
+    pred_items_field: str
 
     def to_dict(self) -> dict[str, str | int | bool]:
         """导出配置快照。"""
@@ -67,6 +73,8 @@ class ReviewEvalConfig:
             "ablation_pred_only_universe": self.ablation_pred_only_universe,
             "ablation_standard_only_universe": self.ablation_standard_only_universe,
             "max_warning_samples": self.max_warning_samples,
+            "gold_items_field": self.gold_items_field,
+            "pred_items_field": self.pred_items_field,
         }
 
 
@@ -93,8 +101,9 @@ class DatasetLoadResult:
     valid_doc_count: int
     scanned_item_count: int
     merged_key_count: int
+    item_field_usage: dict[str, int]
 
-    def to_dict(self) -> dict[str, int]:
+    def to_dict(self) -> dict[str, object]:
         """导出统计信息。"""
 
         return {
@@ -102,7 +111,20 @@ class DatasetLoadResult:
             "valid_doc_count": self.valid_doc_count,
             "scanned_item_count": self.scanned_item_count,
             "merged_key_count": self.merged_key_count,
+            "item_field_usage": dict(self.item_field_usage),
         }
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewEvalRunResult:
+    """review_eval 执行结果。"""
+
+    summary_path: Path
+    warning_path: Path
+    detail_jsonl_path: Path | None
+    detail_csv_path: Path | None
+    summary_payload: dict[str, object]
+    warning_total: int
 
 
 @dataclass(slots=True)
@@ -189,6 +211,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH, help="配置文件路径")
     parser.add_argument("--gold-dir", type=Path, default=None, help="标准集目录（覆盖配置）")
     parser.add_argument("--pred-dir", type=Path, default=None, help="预测集目录（覆盖配置）")
+    parser.add_argument(
+        "--gold-items-field",
+        type=str,
+        default=None,
+        choices=sorted(ITEM_FIELD_CHOICES),
+        help="标准集 item 数组字段（auto/review_items/reflection_items）",
+    )
+    parser.add_argument(
+        "--pred-items-field",
+        type=str,
+        default=None,
+        choices=sorted(ITEM_FIELD_CHOICES),
+        help="预测集 item 数组字段（auto/review_items/reflection_items）",
+    )
     parser.add_argument("--output-dir", type=Path, default=None, help="输出目录（覆盖配置）")
     parser.add_argument("--summary-file", type=str, default=None, help="汇总 JSON 文件名（覆盖配置）")
     parser.add_argument("--warning-file", type=str, default=None, help="warning JSON 文件名（覆盖配置）")
@@ -217,14 +253,28 @@ def main() -> None:
     config = build_runtime_config(args)
     logger = get_logger("experiment")
     logger.info(f"日志文件: {logger.path}")
-    logger.info(f"review_eval_config: {json.dumps(config.to_dict(), ensure_ascii=False)}")
+    result = run_review_eval_with_config(config, logger)
 
+    print(f"[OK] summary -> {result.summary_path}")
+    print(f"[OK] warnings -> {result.warning_path}")
+    if result.detail_jsonl_path is not None:
+        print(f"[OK] details_jsonl -> {result.detail_jsonl_path}")
+    if result.detail_csv_path is not None:
+        print(f"[OK] details_csv -> {result.detail_csv_path}")
+    print(json.dumps(result.summary_payload, ensure_ascii=False, indent=2))
+
+
+def run_review_eval_with_config(config: ReviewEvalConfig, logger: Logger) -> ReviewEvalRunResult:
+    """按给定配置执行 review_eval，并返回产物路径与汇总指标。"""
+
+    logger.info(f"review_eval_config: {json.dumps(config.to_dict(), ensure_ascii=False)}")
     warnings = WarningCollector(logger=logger, max_samples=config.max_warning_samples)
     gold = load_dataset(
         dataset_name="gold",
         input_dir=config.gold_dir,
         label_field="ground_truth",
         label_mapper=map_gold_label,
+        items_field_preference=config.gold_items_field,
         warnings=warnings,
     )
     pred = load_dataset(
@@ -232,6 +282,7 @@ def main() -> None:
         input_dir=config.pred_dir,
         label_field="result",
         label_mapper=map_pred_label,
+        items_field_preference=config.pred_items_field,
         warnings=warnings,
     )
 
@@ -253,6 +304,8 @@ def main() -> None:
         "evaluated_key_count": len(detail_rows),
         "ablation_pred_only_universe": config.ablation_pred_only_universe,
         "ablation_standard_only_universe": config.ablation_standard_only_universe,
+        "gold_items_field": config.gold_items_field,
+        "pred_items_field": config.pred_items_field,
     }
 
     config.output_dir.mkdir(parents=True, exist_ok=True)
@@ -270,18 +323,19 @@ def main() -> None:
         detail_csv_path = config.output_dir / config.detail_csv_filename
         write_detail_csv(detail_rows, detail_csv_path)
 
+    warning_total = warnings.total_count()
     logger.info(
         "review_eval_done: summary=%s, warnings=%s, detail_jsonl=%s, detail_csv=%s, warning_total=%s"
-        % (summary_path, warning_path, detail_jsonl_path, detail_csv_path, warnings.total_count())
+        % (summary_path, warning_path, detail_jsonl_path, detail_csv_path, warning_total)
     )
-
-    print(f"[OK] summary -> {summary_path}")
-    print(f"[OK] warnings -> {warning_path}")
-    if detail_jsonl_path is not None:
-        print(f"[OK] details_jsonl -> {detail_jsonl_path}")
-    if detail_csv_path is not None:
-        print(f"[OK] details_csv -> {detail_csv_path}")
-    print(json.dumps(summary_payload, ensure_ascii=False, indent=2))
+    return ReviewEvalRunResult(
+        summary_path=summary_path,
+        warning_path=warning_path,
+        detail_jsonl_path=detail_jsonl_path,
+        detail_csv_path=detail_csv_path,
+        summary_payload=summary_payload,
+        warning_total=warning_total,
+    )
 
 
 def build_runtime_config(args: argparse.Namespace) -> ReviewEvalConfig:
@@ -321,6 +375,12 @@ def build_runtime_config(args: argparse.Namespace) -> ReviewEvalConfig:
     max_warning_samples = _as_int(raw.get("max_warning_samples"), 30)
     if args.max_warning_samples is not None:
         max_warning_samples = max(1, int(args.max_warning_samples))
+    gold_items_field = _normalize_items_field(
+        args.gold_items_field or str(raw.get("gold_items_field", "auto")).strip()
+    )
+    pred_items_field = _normalize_items_field(
+        args.pred_items_field or str(raw.get("pred_items_field", "auto")).strip()
+    )
 
     if not summary_filename:
         raise ValueError("summary_filename 不能为空。")
@@ -348,6 +408,8 @@ def build_runtime_config(args: argparse.Namespace) -> ReviewEvalConfig:
         ablation_pred_only_universe=ablation_pred_only_universe,
         ablation_standard_only_universe=ablation_standard_only_universe,
         max_warning_samples=max_warning_samples,
+        gold_items_field=gold_items_field,
+        pred_items_field=pred_items_field,
     )
 
 
@@ -369,6 +431,7 @@ def load_dataset(
     input_dir: Path,
     label_field: str,
     label_mapper: Callable[[str, WarningCollector, str, EvalKey, int], tuple[int, int, str]],
+    items_field_preference: str,
     warnings: WarningCollector,
 ) -> DatasetLoadResult:
     """加载数据集并按 key 去重。
@@ -388,6 +451,7 @@ def load_dataset(
     records: dict[EvalKey, ReviewRecord] = {}
     doc_to_keys: dict[str, set[EvalKey]] = defaultdict(set)
     doc_to_files: dict[str, list[str]] = defaultdict(list)
+    item_field_usage: Counter[str] = Counter()
     scanned_items = 0
 
     for file_path in files:
@@ -402,13 +466,17 @@ def load_dataset(
                 f"{dataset_name}: file={file_path} 缺少 doc_id，已跳过。",
             )
             continue
-        review_items = payload.get("review_items")
-        if not isinstance(review_items, list):
-            warnings.add(
-                "missing_review_items",
-                f"{dataset_name}: file={file_path} 缺少 review_items 数组，已跳过。",
-            )
+        resolved = resolve_items_array(
+            payload=payload,
+            dataset_name=dataset_name,
+            file_path=file_path,
+            items_field_preference=items_field_preference,
+            warnings=warnings,
+        )
+        if resolved is None:
             continue
+        review_items, item_field_name = resolved
+        item_field_usage[item_field_name] += 1
 
         doc_to_files[doc_id].append(str(file_path))
         if len(doc_to_files[doc_id]) > 1:
@@ -459,7 +527,42 @@ def load_dataset(
         valid_doc_count=len(doc_to_keys),
         scanned_item_count=scanned_items,
         merged_key_count=len(records),
+        item_field_usage=dict(item_field_usage),
     )
+
+
+def resolve_items_array(
+    *,
+    payload: dict[str, object],
+    dataset_name: str,
+    file_path: Path,
+    items_field_preference: str,
+    warnings: WarningCollector,
+) -> tuple[list[object], str] | None:
+    """按字段偏好解析 item 数组。"""
+
+    preference = _normalize_items_field(items_field_preference)
+    candidate_fields = AUTO_ITEM_FIELDS if preference == "auto" else (preference,)
+
+    for field in candidate_fields:
+        value = payload.get(field)
+        if isinstance(value, list):
+            return value, field
+
+    if preference == "auto":
+        warnings.add(
+            "missing_item_array",
+            (
+                f"{dataset_name}: file={file_path} 缺少可用 item 数组，"
+                "期望字段之一为 reflection_items/review_items。"
+            ),
+        )
+    else:
+        warnings.add(
+            "missing_item_array",
+            f"{dataset_name}: file={file_path} 缺少 {preference} 数组，已跳过。",
+        )
+    return None
 
 
 def evaluate_datasets(
@@ -539,7 +642,13 @@ def discover_json_files(input_dir: Path) -> list[Path]:
         return [input_dir]
     if not input_dir.exists():
         raise FileNotFoundError(f"输入目录不存在: {input_dir}")
-    files = sorted(input_dir.glob("*.json"))
+
+    # 优先匹配业务产物，避免把 metrics/config 等非样本 JSON 混入评测。
+    files = sorted(input_dir.glob("*.review.json"))
+    if not files:
+        files = sorted(input_dir.glob("*.reflection.json"))
+    if not files:
+        files = sorted(input_dir.glob("*.json"))
     if not files:
         raise FileNotFoundError(f"目录下未找到 JSON 文件: {input_dir}")
     return files
@@ -739,6 +848,15 @@ def _as_int(value: object, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _normalize_items_field(value: str) -> str:
+    normalized = clean_text(value).lower()
+    if normalized not in ITEM_FIELD_CHOICES:
+        raise ValueError(
+            f"items_field 必须为 {sorted(ITEM_FIELD_CHOICES)} 之一，当前为: {value}"
+        )
+    return normalized
 
 
 def _resolve_universe_mode(

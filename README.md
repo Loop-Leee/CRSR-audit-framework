@@ -131,7 +131,7 @@ python3 main.py result --ablation-no-writeback
 python3 main.py result --ablation-no-chunk-offset
 ```
 
-7. `experiment`（统一实验入口，按 `chunking -> classification -> review` 运行并产出指标）
+7. `experiment`（统一实验入口，按 `chunking -> classification -> review -> reflection` 运行并产出指标）
 
 ```bash
 python3 main.py experiment \
@@ -181,6 +181,17 @@ python3 main.py experiment \
   --review-schema-retry-limit 2
 ```
 
+覆盖 reflection 与 review_eval 参数示例：
+
+```bash
+python3 main.py experiment \
+  --run-name exp_with_reflection_eval \
+  --mode keyword_llm \
+  --reflection-stage1-threshold 4 \
+  --reflection-stage2-max-items 6 \
+  --review-eval-gold-dir dataset/standard-review
+```
+
 带标注集（用于 P/R/F1）：
 
 ```bash
@@ -195,7 +206,7 @@ Review 标准集对齐评测（`(doc_id, chunk_id, risk_type)`）：
 ```bash
 python3 -m src.experiment.review_eval \
   --gold-dir dataset/standard-review \
-  --pred-dir data/4-review \
+  --pred-dir data/5-reflection \
   --output-dir data/experiments/review_eval
 ```
 
@@ -264,7 +275,7 @@ python3 -m src.exp_cuad.run_infer \
 - review 标准集评测：`src/experiment/review_eval.py`
 - 输出根目录：`data/experiments/`
 - 模块完整文档：`src/experiment/README.md`
-- 执行链路：`chunking -> classification -> review`
+- 执行链路：`chunking -> classification -> review -> reflection`
 
 每次实验会生成：
 
@@ -284,9 +295,21 @@ data/experiments/
     review/keyword_only/*.review.json              # keyword_llm_experiment
     review/llm_only/*.review.json                  # keyword_llm_experiment
     review/keyword_llm/*.review.json               # keyword_llm_experiment
+    reflection/*.reflection.json
+    reflection/reflection_trace.jsonl
+    reflection/reflection_metrics.json
+    reflection/keyword_only/*.reflection.json      # keyword_llm_experiment
+    reflection/llm_only/*.reflection.json          # keyword_llm_experiment
+    reflection/keyword_llm/*.reflection.json       # keyword_llm_experiment
+    melting-reflection/review_eval_*.json
+    melting-reflection/review_eval_*.jsonl
+    melting-reflection/review_eval_*.csv
     audit_result/audit_result.json
     final_report/final_report.md
     final_report/final_report_*.md                 # keyword_llm_experiment
+    final_report/reflection_review_eval_*.json
+    final_report/reflection_review_eval_*.jsonl
+    final_report/reflection_review_eval_*.csv
     metrics/
       experiment_config.json
       llm_trace.jsonl
@@ -298,7 +321,7 @@ data/experiments/
 
 - 配置参数：`run_id/timestamp/mode/model/temperature/chunk_size/max_concurrency/cache_*`
 - 复合模式标识：`experiment_mode`（用于区分 `keyword_llm_experiment`）
-- review 产物计数：`review_file_count`
+- review/reflection 产物计数：`review_file_count/reflection_file_count`
 - 质量指标：`precision/recall/f1`（有标注集时计算）
 - 运行指标：`avg_token_in/avg_token_out/avg_total_token/reasoning_token_ratio/cached_token_ratio/avg_latency_ms/schema_valid_rate/conflict_rate/cache_hit_rate/llm_error_rate/total_tokens_estimated_rate`
 
@@ -313,7 +336,7 @@ data/experiments/
 - 标注字段：`review_items.ground_truth` 默认写入 `待审核`（可用 `--ground_truth` 覆盖）
 - 稳定性：schema 不合规输出支持限次重试（`--schema-retry-limit`，默认 `1`，上限 `3`）
 - 评估脚本：`python3 -m src.review.review_eval --input data/4-review`（输出 TP/FP/TN/FN）
-- 标准集对齐评测：`python3 -m src.experiment.review_eval --gold-dir dataset/standard-review --pred-dir data/4-review`
+- 标准集对齐评测（默认优先读取 `reflection_items`）：`python3 -m src.experiment.review_eval --gold-dir dataset/standard-review --pred-dir data/5-reflection`
 - 运行产物：
   - `data/4-review/review_trace.jsonl`
   - `data/4-review/review_metrics.json`
