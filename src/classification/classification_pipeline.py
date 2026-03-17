@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import time
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -56,6 +57,41 @@ class ClassificationRunResult:
     chunk_diagnostics: list[ChunkClassificationDiagnostic]
     outputs_by_mode: dict[str, list[Path]]
     diagnostics_by_mode: dict[str, list[ChunkClassificationDiagnostic]]
+    metrics: "ClassificationRunMetrics"
+    metrics_by_mode: dict[str, "ClassificationRunMetrics"]
+    metrics_path: Path
+
+
+@dataclass(frozen=True, slots=True)
+class ClassificationRunMetrics:
+    """分类运行指标。"""
+
+    file_count: int
+    chunk_count: int
+    risk_type_catalog_count: int
+    detected_risk_type_count: int
+    total_risk_hit_count: int
+    avg_risk_type_per_chunk: float
+    llm_called_chunk_count: int
+    llm_error_rate: float
+    avg_token_in: float
+    avg_token_out: float
+    avg_llm_total_token: float
+    avg_total_token: float
+    avg_token: float
+    avg_chunk_token: float
+    total_llm_latency_ms: float
+    avg_latency_ms: float
+    avg_chunk_latency_ms: float
+    avg_total_latency_ms: float
+    run_duration_ms: float
+    strategy: str
+    emit_all_variants: bool
+
+    def to_dict(self) -> dict[str, float | int | bool | str]:
+        """导出指标字典。"""
+
+        return asdict(self)
 
 
 def discover_chunk_files(input_path: Path) -> list[Path]:
@@ -135,11 +171,13 @@ def run_classification_with_diagnostics(
 ) -> ClassificationRunResult:
     """执行分类主流程并返回 chunk 级诊断信息。"""
 
+    run_started_at = time.perf_counter()
     _validate_strategy(strategy)
     output_modes = _effective_output_modes(strategy, emit_all_variants)
     files = discover_chunk_files(input_path)
     if not files:
         raise FileNotFoundError(f"未找到待分类文件: {input_path}")
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     catalog = load_risk_catalog(risk_info_path)
     need_keyword = strategy != "llm_only" or emit_all_variants
@@ -277,6 +315,28 @@ def run_classification_with_diagnostics(
             logger.error(message)
             failures.append(message)
 
+    run_duration_ms = (time.perf_counter() - run_started_at) * 1000.0
+    metrics_by_mode: dict[str, ClassificationRunMetrics] = {}
+    for mode in output_modes:
+        metrics_by_mode[mode] = _compute_classification_metrics(
+            diagnostics=diagnostics_by_mode[mode],
+            file_count=len(outputs_by_mode[mode]),
+            risk_type_catalog_count=len(catalog.order),
+            run_duration_ms=run_duration_ms,
+            strategy=mode,
+            emit_all_variants=emit_all_variants,
+        )
+    metrics = metrics_by_mode[strategy]
+    metrics_path = output_dir / "classification_metrics.json"
+    _write_classification_metrics(
+        path=metrics_path,
+        metrics=metrics,
+        metrics_by_mode=metrics_by_mode,
+        strategy=strategy,
+        emit_all_variants=emit_all_variants,
+    )
+    logger.info(f"classification_metrics_written: {metrics_path}")
+
     if failures:
         raise RuntimeError("分类流程存在失败文件，请检查日志。")
 
@@ -286,6 +346,9 @@ def run_classification_with_diagnostics(
         chunk_diagnostics=diagnostics,
         outputs_by_mode=outputs_by_mode,
         diagnostics_by_mode=diagnostics_by_mode,
+        metrics=metrics,
+        metrics_by_mode=metrics_by_mode,
+        metrics_path=metrics_path,
     )
 
 
@@ -449,3 +512,101 @@ def _build_payload_with_risks(payload: object, source: Path, risks_by_chunk: lis
     for chunk, risks in zip(chunks, risks_by_chunk):
         chunk["risk_type"] = risks
     return copied_payload
+
+
+def _write_classification_metrics(
+    *,
+    path: Path,
+    metrics: ClassificationRunMetrics,
+    metrics_by_mode: dict[str, ClassificationRunMetrics],
+    strategy: ClassificationStrategy,
+    emit_all_variants: bool,
+) -> None:
+    """写出 classification 运行指标。"""
+
+    if emit_all_variants:
+        payload: dict[str, object] = {
+            "strategy": strategy,
+            "emit_all_variants": True,
+            "selected_metrics": metrics.to_dict(),
+            "metrics_by_mode": {
+                mode: mode_metrics.to_dict() for mode, mode_metrics in metrics_by_mode.items()
+            },
+        }
+    else:
+        payload = metrics.to_dict()
+
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _compute_classification_metrics(
+    *,
+    diagnostics: list[ChunkClassificationDiagnostic],
+    file_count: int,
+    risk_type_catalog_count: int,
+    run_duration_ms: float,
+    strategy: ClassificationStrategy,
+    emit_all_variants: bool,
+) -> ClassificationRunMetrics:
+    """聚合 classification 运行指标。"""
+
+    chunk_count = len(diagnostics)
+    total_risk_hit_count = sum(len(item.final_risks) for item in diagnostics)
+    detected_risk_type_count = len(
+        {risk for item in diagnostics for risk in item.final_risks}
+    )
+    avg_risk_type_per_chunk = _safe_rate(total_risk_hit_count, chunk_count)
+
+    llm_rows = [item for item in diagnostics if item.llm_called]
+    llm_error_rate = _safe_rate(
+        sum(1 for item in llm_rows if item.error_code is not None),
+        len(llm_rows),
+    )
+
+    avg_token_in = _safe_mean([item.token_in for item in llm_rows])
+    avg_token_out = _safe_mean([item.token_out for item in llm_rows])
+    avg_llm_total_token = _safe_mean([item.total_tokens for item in llm_rows])
+    avg_token = avg_llm_total_token
+    avg_chunk_token = _safe_mean([item.total_tokens for item in diagnostics])
+    avg_total_token = avg_chunk_token * float(chunk_count)
+
+    total_llm_latency_ms = float(sum(item.latency_ms for item in llm_rows))
+    avg_latency_ms = _safe_mean([item.latency_ms for item in llm_rows])
+    avg_chunk_latency_ms = _safe_mean([item.latency_ms for item in diagnostics])
+    avg_total_latency_ms = avg_chunk_latency_ms * float(chunk_count)
+
+    return ClassificationRunMetrics(
+        file_count=file_count,
+        chunk_count=chunk_count,
+        risk_type_catalog_count=risk_type_catalog_count,
+        detected_risk_type_count=detected_risk_type_count,
+        total_risk_hit_count=total_risk_hit_count,
+        avg_risk_type_per_chunk=avg_risk_type_per_chunk,
+        llm_called_chunk_count=len(llm_rows),
+        llm_error_rate=llm_error_rate,
+        avg_token_in=avg_token_in,
+        avg_token_out=avg_token_out,
+        avg_llm_total_token=avg_llm_total_token,
+        avg_total_token=avg_total_token,
+        avg_token=avg_token,
+        avg_chunk_token=avg_chunk_token,
+        total_llm_latency_ms=total_llm_latency_ms,
+        avg_latency_ms=avg_latency_ms,
+        avg_chunk_latency_ms=avg_chunk_latency_ms,
+        avg_total_latency_ms=avg_total_latency_ms,
+        run_duration_ms=run_duration_ms,
+        strategy=strategy,
+        emit_all_variants=emit_all_variants,
+    )
+
+
+def _safe_rate(numerator: int | float, denominator: int | float) -> float:
+    if float(denominator) <= 0.0:
+        return 0.0
+    return float(numerator) / float(denominator)
+
+
+def _safe_mean(values: list[int | float]) -> float:
+    if not values:
+        return 0.0
+    return float(sum(float(item) for item in values)) / float(len(values))

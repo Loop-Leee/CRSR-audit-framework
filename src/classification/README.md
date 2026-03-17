@@ -21,6 +21,7 @@ python3 main.py classification --disable-llm-concurrency
 
 - 输入：`data/2-chunks/*.chunks.json`（或单个 JSON 文件）
 - 输出：`data/3-classified/*.classified.json`
+- 运行级指标：`data/3-classified/classification_metrics.json`
 - 输出差异：每个 chunk 新增 `risk_type` 字段（字符串数组）
 
 示例：
@@ -32,6 +33,18 @@ python3 main.py classification --disable-llm-concurrency
   "risk_type": ["付款时间审查", "发票审查"]
 }
 ```
+
+`classification_metrics.json` 关键字段：
+
+- `avg_token`：平均 token 消耗（LLM 调用维度）
+- `avg_llm_total_token`：LLM 调用维度的平均总 token
+- `avg_chunk_token`：平均每个 chunk 的 token 消耗
+- `avg_total_token`：按 chunk 口径估算的总 token，`avg_chunk_token * chunk_count`
+- `avg_chunk_latency_ms`：平均每个 chunk 请求时长（毫秒）
+- `avg_total_latency_ms`：按 chunk 口径估算的总时长，`avg_chunk_latency_ms * chunk_count`
+- `avg_risk_type_per_chunk`：平均每个 chunk 识别风险类型数
+- `chunk_count`：chunk 总数
+- `risk_type_catalog_count`：风险类型总数（目录）
 
 ## 配置
 

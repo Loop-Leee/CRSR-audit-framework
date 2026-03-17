@@ -277,6 +277,7 @@ python3 -m src.exp_cuad.run_infer \
 - 目录：`src/classification/`
 - 输入：`data/2-chunks/*.chunks.json`
 - 输出：`data/3-classified/*.classified.json`
+- 指标：`data/3-classified/classification_metrics.json`
 - 规则源：`prompt/risk_info.csv`
 - 分类策略：关键词匹配 + LLM 语义匹配，结果取并集
 - 说明文档：`src/classification/README.md`

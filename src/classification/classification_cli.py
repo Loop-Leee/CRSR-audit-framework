@@ -9,7 +9,7 @@ from src.llm import DEFAULT_LLM_CONFIG_PATH, load_llm_settings
 from src.tools.logger import get_logger
 
 from .classification_config import load_classification_config
-from .classification_pipeline import run_classification
+from .classification_pipeline import run_classification_with_diagnostics
 
 
 def parse_args() -> argparse.Namespace:
@@ -51,7 +51,7 @@ def main() -> None:
     logger = get_logger("classification", log_dir=config["log_dir"])
     logger.info(f"日志文件: {logger.path}")
 
-    outputs = run_classification(
+    result = run_classification_with_diagnostics(
         input_path=input_path,
         output_dir=output_path,
         risk_info_path=config["risk_info"],
@@ -59,8 +59,9 @@ def main() -> None:
         logger=logger,
     )
 
-    for output in outputs:
+    for output in result.outputs:
         print(f"[OK] classified -> {output}")
+    print(f"[OK] metrics -> {result.metrics_path}")
 
 
 if __name__ == "__main__":
